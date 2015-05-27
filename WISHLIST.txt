@@ -1,0 +1,10 @@
+WISHLIST ITEMS
+MASTER'S PROJECT
+
+1. County level census estimates of population
+	- additionally, density estimates, or anything else that may be
+	  associated with increased human activity.
+
+2. Scaling up a hierarchical model to handle larger datasets
+
+3. Model compression of hierarchical models?
