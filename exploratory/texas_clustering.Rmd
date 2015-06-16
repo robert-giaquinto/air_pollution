@@ -1,0 +1,325 @@
+---
+title: "Clustering of Texas Monitoring Stations"
+author: "Robert A. Giaquinto"
+date: "June 2, 2015"
+output: html_document
+---
+
+# Load Data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(Hmisc)
+library(ggplot2)
+library(scales)
+library(reshape2)
+library(dplyr)
+library(xtable)
+library(lubridate)
+```
+
+```{r, results='asis'}
+data_dir='/Users/robert/Documents/UMN/air_pollution/'
+DF <- read.csv(paste0(data_dir, 'texas.csv'), stringsAsFactors=FALSE)
+DF$Date <- ymd(DF$Date_Local)
+DF$Date_Local <- NULL
+DF$Year <- year(DF$Date)
+DF$Longitude <- as.numeric(DF$Longitude)
+DF$Latitude <- as.numeric(DF$Latitude)
+
+```
+
+
+Describe the data:
+
+```{r}
+describe(DF)
+```
+
+Remove locations with missing data
+```{r}
+by_site <- DF %>% group_by(County_Code, Site_Num, Year) %>%
+    summarise(avg_pm = mean(pm25),
+        pm10_missing = sum(is.na(pm10))/length(Site_Num),
+        pressure_missing = sum(is.na(pressure))/length(Site_Num),
+        humidity_missing = sum(is.na(RH_Dewpoint_Percent_relative_humidity))/length(Site_Num),
+        dewpoint_degreesf_missing = sum(is.na(RH_Dewpoint_Degrees_Fahrenheit))/length(Site_Num),
+        wind_speed_missing = sum(is.na(wind_Knots))/length(Site_Num),
+        wind_direction_missing = sum(is.na(wind_Degrees_Compass)) / length(Site_Num),
+        temp_missing = sum(is.na(temperature)) / length(Site_Num),
+        count = length(County_Code))
+
+# only look at sites with less than 10% missing in some year
+non_missing = unique(by_site[by_site$wind_speed_missing < .1 &
+        by_site$wind_direction_missing < .1 &
+        by_site$temp_missing < .1, c("County_Code", "Site_Num")])
+
+DF <- inner_join(DF, non_missing, by = c("County_Code", "Site_Num"))
+
+```
+
+map locations:
+
+```{r}
+library(ggmap)
+map <- get_map(location = 'texas', zoom=6, color="bw")
+p <- ggmap(map)
+agg_df <- DF %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(ct = length(pm25))
+p + geom_point(data=agg_df, aes(x=Longitude, y=Latitude), color="red")
+
+
+```
+
+cluster locations
+
+```{r,results='asis'}
+n_clusters <- 5
+X <- as.matrix(agg_df[,1:2])
+
+#  K-Means clustering, scale the data matrix.
+clusters <- kmeans(scale(X), n_clusters, iter.max = 100)
+
+#  Add cluster label to the data frame.
+agg_df$cluster <- factor(clusters$cluster)
+
+#  Examine the cluster averages (use unlogged, unscaled variable values).
+centers <- agg_df %>% group_by(cluster) %>%
+    summarise(Latitude = mean(Latitude),
+        Longitude = mean(Longitude),
+        num_unique = length(ct),
+        num = sum(ct))
+centers <- centers[order(centers$num_unique, centers$num, decreasing=TRUE),]
+print(xtable(centers), type='html')
+
+```
+
+plot clusters
+```{r}
+p + geom_point(data=agg_df, aes(x=Longitude, y=Latitude, colour=cluster), size=3) +
+    theme(legend.position = "none")
+
+sizable_clusters <- centers[centers$num_unique > 4,]
+plot_df <- agg_df[agg_df$cluster %in% sizable_clusters$cluster,]
+p + geom_hex(data=plot_df,
+    aes(x=Longitude, y=Latitude, fill=cluster),
+        colour = "white", alpha = .6) +
+    geom_point(data = sizable_clusters,
+        aes(x = Longitude,
+            y = Latitude),
+        colour = "black",
+        alpha=.6,
+        size = 16) +
+    geom_point(data = sizable_clusters,
+        aes(x = Longitude,
+            y = Latitude,
+            colour = cluster),
+        alpha=.6,
+        size = 15) +
+    geom_text(data = sizable_clusters,
+        aes(x = Longitude,
+            y = Latitude,
+            label = paste0("#", cluster, ": ", num_unique)),
+        size=4,
+        colour = "black") +
+    labs(title = "Spatial Clusters") +
+    theme(legend.position = "none")
+
+```
+
+zoom in on largest cluster:
+
+```{r}
+biggest_cluster <- agg_df[agg_df$cluster %in% centers$cluster[1],]
+
+area <- get_map(location = c(lon=mean(biggest_cluster$Longitude),
+    lat=mean(biggest_cluster$Latitude)),
+    zoom=9,
+    color="bw")
+p <- ggmap(area)
+p + geom_point(data=biggest_cluster, aes(x=Longitude, y=Latitude), color="red")
+
+
+# save the data for the three biggest clusters
+# write.csv(agg_df[agg_df$cluster %in% centers$cluster[1],], file="houston.csv")
+# write.csv(agg_df[agg_df$cluster %in% centers$cluster[2],], file="dallas.csv")
+# write.csv(agg_df[agg_df$cluster %in% centers$cluster[3],], file="san_antonio.csv")
+```
+
+
+Below is a summary of the data in this location
+
+```{r}
+area_df = DF[DF$Latitude >= min(biggest_cluster$Latitude) &
+        DF$Latitude <= max(biggest_cluster$Latitude) &
+        DF$Longitude >= min(biggest_cluster$Longitude) &
+        DF$Longitude <= max(biggest_cluster$Longitude),]
+area_df$County_Code <- factor(area_df$County_Code)
+area_df$Site_Num <- factor(area_df$Site_Num)
+area_df$Year <- factor(area_df$Year)
+area_df$State_Code <- NULL
+area_df$pm10 <- NULL
+describe(area_df)
+```
+
+
+The area containing this cluster has Longitude = (`r round(min(area_df$Longitude), 2)`, `r round(max(area_df$Longitude), 2)`), and Latitude = (`r round(min(area_df$Latitude), 2)`, `r round(max(area_df$LLatitude), 2)`)
+
+## Trends
+Examine trends across years, month, hour, week, location, etc.
+
+What is distribution of particulate matter 2.5?
+
+```{r}
+plot_df <- area_df
+plot_df$pm25 <- ifelse(plot_df$pm25 <= 0, .999, plot_df$pm25)
+plot_df$aqi <- factor(ifelse(plot_df$pm25 <= 12, "good",
+    ifelse(plot_df$pm25 <= 35.4, "moderate",
+        ifelse(plot_df$pm25 <= 55.4, "unhealthy for sensitive groups",
+            ifelse(plot_df$pm25 <= 150.4, "unhealthy",
+                ifelse(plot_df$pm25 <= 250.4, "very unhealthy", "hazardous"))))))
+
+ggplot(plot_df, aes(x=pm25, fill=aqi)) +
+    geom_bar() +
+    theme_bw() +
+    scale_x_log10(breaks=c(0.1,10,50,100,500), labels=comma, limits=c(.5,500)) +
+    theme(legend.position="bottom")
+
+```
+
+What are the county codes?
+```{r}
+uniq_locations = unique(area_df[,c("Longitude", "Latitude", "County_Code")])
+p + geom_point(data=uniq_locations, aes(x=Longitude, y=Latitude, colour=County_Code), size=5) +
+    theme(legend.position = "bottom")
+
+
+```
+Summaries by county
+```{r}
+by_county <- area_df %>% group_by(County_Code) %>%
+    summarise(avg_pm = mean(pm25),
+        avg_wind_speed = mean(wind_Knots, na.rm=TRUE),
+        wind_speed_missing = sum(is.na(wind_Knots))/length(wind_Knots),
+        avg_wind_direction = mean(wind_Degrees_Compass, na.rm=TRUE),
+        wind_direction_missing = sum(is.na(wind_Degrees_Compass)) / length(wind_Degrees_Compass),
+        avg_temp = mean(temperature, na.rm=TRUE),
+        temp_missing = sum(is.na(temperature)) / length(temperature),
+        count = length(County_Code))
+print(xtable(by_county), type='html')
+```
+
+Plot wind speeds and directions
+
+```{r}
+plot_df <- area_df[is.na(area_df$wind_Knots) == FALSE &
+        is.na(area_df$wind_Degrees_Compass) == FALSE,]
+spdseq <- seq(min(plot_df$wind_Knots, na.rm=TRUE), max(plot_df$wind_Knots, na.rm=TRUE), 6)
+# get some information about the number of bins, etc.
+n.spd.seq <- length(spdseq)
+n.colors.in.range <- n.spd.seq - 1
+# create the color map
+require(RColorBrewer)
+spd.colors <- colorRampPalette(brewer.pal(
+    min(
+        max(3,n.colors.in.range),
+        min(9, n.colors.in.range)
+    ),
+    "YlGnBu"))(n.colors.in.range)
+spd.breaks <- spdseq
+spd.labels <- paste(c(spdseq[1:n.spd.seq-1]),
+    '-',
+    c(spdseq[2:n.spd.seq]))
+plot_df$spd.binned <- cut(x = plot_df$wind_Knots,
+    breaks = spd.breaks,
+    labels = spd.labels,
+    ordered_result = TRUE)
+
+# figure out the wind direction bins
+dirres=30
+dir.breaks <- c(-dirres/2,
+    seq(dirres/2, 360-dirres/2, by = dirres),
+    360+dirres/2)  
+dir.labels <- c(paste(360-dirres/2,"-",dirres/2),
+    paste(seq(dirres/2, 360-3*dirres/2, by = dirres),
+        "-",
+        seq(3*dirres/2, 360-dirres/2, by = dirres)),
+    paste(360-dirres/2,"-",dirres/2))
+# assign each wind direction to a bin
+dir.binned <- cut(plot_df$wind_Degrees_Compass,
+    breaks = dir.breaks,
+    ordered_result = TRUE)
+levels(dir.binned) <- dir.labels
+plot_df$dir.binned <- dir.binned
+
+windrose <- ggplot(data = plot_df,
+    aes(x = dir.binned,
+        fill = spd.binned)) +
+    geom_bar() + 
+    scale_x_discrete(drop = FALSE,
+        labels = waiver()) +
+    coord_polar(start = -((dirres/2)/360) * 2*pi) +
+    scale_fill_manual(name = "Wind Speed (m/s)", 
+        values = spd.colors,
+        drop = FALSE) +
+    theme(axis.title.x = element_blank(), legend.position="bottom")
+print(windrose)
+```
+
+
+```{r}
+plot_df <- area_df %>% group_by(Year) %>%
+    summarise(avg = mean(pm25),
+        stdev = sd(pm25,na.rm=TRUE))
+
+limits <- aes(ymax = avg + stdev, ymin=avg - stdev)
+dodge <- position_dodge(width=0.9)
+ggplot(plot_df, aes(x=Year, y=avg)) +
+    geom_bar(stat="identity", fill="blue", alpha = .5) +
+    geom_errorbar(limits, position=dodge, width=0.25) +
+    theme_bw()
+```
+
+
+```{r}
+plot_df <- area_df %>% group_by(County_Code) %>%
+    summarise(avg = mean(pm25),
+        stdev = sd(pm25,na.rm=TRUE))
+
+limits <- aes(ymax = avg + stdev, ymin=avg - stdev)
+dodge <- position_dodge(width=0.9)
+ggplot(plot_df, aes(x=County_Code, y=avg)) +
+    geom_bar(stat="identity", fill="blue", alpha = .5) +
+    geom_errorbar(limits, position=dodge, width=0.25) +
+    theme_bw()
+```
+
+
+```{r}
+plot_df <- area_df %>% group_by(Site_Num) %>%
+    summarise(avg = mean(pm25),
+        stdev = sd(pm25,na.rm=TRUE))
+
+limits <- aes(ymax = avg + stdev, ymin=avg - stdev)
+dodge <- position_dodge(width=0.9)
+ggplot(plot_df, aes(x=Site_Num, y=avg)) +
+    geom_bar(stat="identity", fill="blue", alpha = .5) +
+    geom_errorbar(limits, position=dodge, width=0.25) +
+    theme_bw()
+```
+
+
+```{r}
+plot_df <- area_df %>% group_by(Time_Local) %>%
+    summarise(avg = mean(pm25),
+        stdev = sd(pm25,na.rm=TRUE))
+
+limits <- aes(ymax = avg + stdev, ymin=avg - stdev)
+dodge <- position_dodge(width=0.9)
+ggplot(plot_df, aes(x=Time_Local, y=avg)) +
+    geom_bar(stat="identity", fill="blue", alpha = .5) +
+    geom_errorbar(limits, position=dodge, width=0.25) +
+    theme_bw()
+```
+
+
+

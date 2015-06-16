@@ -1,0 +1,112 @@
+%  SET UP%  SET UP LaTeX DEFAULTS  ----------------------------------------------------------------------------
+	\documentclass{article}
+\usepackage[sc]{mathpazo}
+\renewcommand{\sfdefault}{lmss}
+\renewcommand{\ttdefault}{lmtt}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{verbose,tmargin=2.5cm,bmargin=2.5cm,lmargin=2.5cm,rmargin=2.5cm}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{3}
+% \usepackage[options]{algorithm2e}
+\usepackage{url}
+\usepackage{setspace}
+\usepackage{relsize}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{amsmath}
+\usepackage{enumerate}
+\usepackage{booktabs}
+
+\usepackage[authoryear]{natbib}
+\usepackage[nottoc]{tocbibind}
+\usepackage[unicode=true,pdfusetitle,bookmarks=true,bookmarksnumbered=true,bookmarksopen=true,bookmarksopenlevel=2,breaklinks=false,pdfborder={0 0 0},backref=false,colorlinks,citecolor=black,filecolor=black,linkcolor=black,urlcolor=black]{hyperref}
+\hypersetup{
+	pdfstartview={XYZ null null 1}}
+%\usepackage{breakurl}
+\makeatletter
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% User specified LaTeX commands.
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\topfraction}{0.8}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\floatpagefraction}{0.75}
+\usepackage[buttonsize=1em]{animate}
+\makeatother
+\renewcommand{\bibname}{References}
+
+\begin{document}
+
+
+%  Base KnitR code ------------------------------------------------------------------
+<<setup, include=FALSE, cache=FALSE>>=
+library(knitr)
+
+opts_chunk$set(fig.align='center',
+	fig.show='hold',
+	fig.pos='H',
+	message=FALSE,
+	warning=FALSE,
+	echo=FALSE,
+	par=TRUE)
+options(width=80)
+@
+
+\title{Predicting Air Pollution Between Monitoring Stations}
+\author{Robert A. Giaquinto}
+\maketitle
+
+%The objective of this Master's Project is to use techniques from statistics and machine learning in order to model air pollution as a function of historical trends, and meteorological and human activity.
+
+%Modeling air pollution is a challenging task because of spatio-temporal correlations within the data. Moreover, there is a substantial amount of data available, thus developing computational techniques to efficiently take advantage of all this information is paramount.
+
+%Presently, very little work has been done to produce long range forecasts for air pollution, making this work an important first step understanding potential future health risks. Additionally, this study may help explain how air pollution levels can spike dramatically as a result of air stagnation -- which can occur even in smaller urban areas whose air is generally very clean.
+
+\section{Introduction}
+Air pollution is well known to be harmful to human health, especially for children and the elderly. % 7million premature deaths http://www.who.int/mediacentre/news/releases/2014/air-pollution/en/
+Major sources of air pollution include mechanical processes, the burning of fossil fuels, and other human activity. Consequently, those living in large metropolitan areas risk being subject to higher levels of these harmful particles. However, it's unclear whether the health risks are uniform throughout the city, or if some areas pose higher risks.
+
+The Environmental Protection Agency maintains air monitoring stations around the nation, which help alert citizens when air pollution levels reach dangerous levels\cite{epa}. Unfortunately, these stations only measure particle levels at specific locations, and often reports are only given city-wide.
+My goal is to be able to accurately predict air pollution in the neighborhoods between air monitoring stations.
+To do this I will take a machine learning approach, modeling air pollution levels as a function of historical trends and meteorological changes.
+
+%Particles that are small enough can pass through the body's natural defenses and damage lungs, with some particules small enough to pass into the blood stream. Coarse particles, the larger variety of harmful particules, are primarily caused by human activities such as construction and demolition, mining operations, agriculture, and other mechanical processes -- as well as natural processes such as pollen and dust. Ultrafine particles are largely the result of burning fossil fuels.
+
+% Data available down to an hourly granularity on criteria gases: ground level ozone, $SO_2$, $CO$, $NO_2$; Particulates: PM2.5 FRM Mass, PM2.5 non FRM Mass, PM10 Mass, Speciation; meterological measures of: Winds (Resultant), Temperature, barometric pressure, RH and Dewpoint; as well as measures of various toxics, including: hazardous air pollutants (HAPs), and volatile organic compounds (VOCs)
+
+\section{Approach}
+With the goal of predicting air pollution levels at a smaller scale, I plan to follow approaches used for climate prediction and downscaling, whose data is also spatiotemporally correlated, specifically: Gaussian Processes (such as Kriging), Hierarchical or Mixed Effect Models, regression models with spatial smoothing, and Hidden Markov Models\cite{banerjee14}\cite{banerjee13}. My results will be compared to those obtained by more standard machine learning algorithms such as Support Vector Machine -- which other studies found to be effective\cite{svm}. Many of these other studies only make use of data from a single metropolitan area. My approach differs through its use of data from across the nation -- which should result in better learning of features.
+
+Finally, my approach is heavily based on meteorological data. Air pollution levels can spike dramatically as a result of air stagnation -- even in smaller urban areas whose air is usually clean. Despite the short span of exposure caused by such weather, the effects pose serious health risks\cite{health}. Capturing weather based features will be crucial for understanding many of the spatiotemporal interactions.
+
+
+
+
+\section{Progress and Next Steps}
+\begin{itemize}
+	\item Completed a brief literature review of machine learning applied to air pollution as well as climatology. Next step is to dive deeper into the theoretical aspects of the machine learning techniques used (namely: HMM, RMF, Kriging), and choose a specific technique to employ.
+	\item Cleaned and merged EPA's sources on air pollution, weather, and criteria gases. There are a few additional sources for features that I want to review and possibly add, but I may already have enough features to yield results.
+	\item Selected the goal of being able to accurately predict air pollution between monitoring stations. If early results don't look promising I will need to find other useful results that can obtained through a machine learning approach in this domain.
+\end{itemize}
+
+
+
+<<eval=FALSE>>=
+data_dir = '/Users/robert/Documents/UMN/air_pollution/'
+DF <- read.csv(paste0(data_dir, 'merged_data.csv'))
+DF$lon <- as.numeric(as.character(DF$Longitude))
+DF$lat <- as.numeric(as.character(DF$Latitude))
+
+library(ggplot2)
+library(ggmap)
+map <- get_map(location = 'united states', zoom=4)
+p <- ggmap(map)
+p + geom_point(data=DF, aes(x=lon, y=lat), color="red")
+
+
+@
+
+\newpage
+\bibliographystyle{unsrt}
+\bibliography{./Proposal.bib}
+
+\end{document}
