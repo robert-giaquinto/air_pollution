@@ -1,0 +1,42 @@
+12103	Arsenic (TSP) STP
+12105	Beryllium (TSP) STP
+12110	Cadmium (TSP) STP
+12112	Chromium (TSP) STP
+12115	Chromium VI (TSP) STP
+12128	Lead (TSP) STP
+12132	Manganese (TSP) STP
+12136	Nickel (TSP) STP
+14115	Chromium VI (TSP) LC
+43218	1,3-Butadiene
+43502	Formaldehyde
+43503	Acetaldehyde
+43505	Acrolein - Unverified
+43509	Acrolein - Verified
+43802	Dichloromethane
+43803	Chloroform
+43804	Carbon tetrachloride
+43815	Ethylene dichloride
+43817	Tetrachloroethylene
+43818	1,1,2,2-Tetrachloroethane
+43824	Trichloroethylene
+43829	1,2-Dichloropropane
+43830	trans-1,3-Dichloropropene
+43831	cis-1,3-Dichloropropene
+43843	Ethylene dibromide
+43860	Vinyl chloride
+45201	Benzene
+82103	Arsenic PM10 STP
+82105	Beryllium PM10 STP
+82110	Cadmium PM10 STP
+82112	Chromium PM10 STP
+82128	Lead PM10 STP
+82132	Manganese PM10 STP
+82136	Nickel PM10 STP
+82142	Mercury PM10 STP
+88103	Arsenic PM2.5 LC
+88105	Beryllium PM2.5 LC
+88110	Cadmium PM2.5 LC
+88112	Chromium PM2.5 LC
+88128	Lead PM2.5 LC
+88132	Manganese PM2.5 LC
+88136	Nickel PM2.5 LC

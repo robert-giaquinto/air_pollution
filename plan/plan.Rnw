@@ -1,0 +1,253 @@
+\documentclass[nohyper,justified]{tufte-handout}
+
+\title{Master's Project Plan - Robert A. Giaquinto}
+\date{}
+
+\usepackage{paralist}
+\usepackage{tikz}
+\usepackage{booktabs} % book-quality tables
+\usepackage{units}    % non-stacked fractions and better unit spacing
+\usepackage{multicol} % multiple column layout facilities
+\usepackage[unicode=true,pdfusetitle,
+ bookmarks=true,bookmarksnumbered=true,bookmarksopen=true,bookmarksopenlevel=2,
+ breaklinks=true,pdfborder={0 0 0},backref=false,colorlinks=false]
+ {hyperref}
+\hypersetup{
+ pdfstartview=FitH}
+\usepackage{breakurl}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% User specified LaTeX commands.
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\topfraction}{0.8}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\floatpagefraction}{0.75}
+
+% Standardize command font styles and environments
+\newcommand{\doccmd}[1]{\texttt{\textbackslash#1}}% command name -- adds backslash automatically
+\newcommand{\docopt}[1]{\ensuremath{\langle}\textrm{\textit{#1}}\ensuremath{\rangle}}% optional command argument
+\newcommand{\docarg}[1]{\textrm{\textit{#1}}}% (required) command argument
+\newcommand{\docenv}[1]{\textsf{#1}}% environment name
+\newcommand{\docpkg}[1]{\texttt{#1}}% package name
+\newcommand{\doccls}[1]{\texttt{#1}}% document class name
+\newcommand{\docclsopt}[1]{\texttt{#1}}% document class option name
+\newenvironment{docspec}{\begin{quote}\noindent}{\end{quote}}% command specification environment
+
+\begin{document}
+% \makeatother
+\maketitle
+
+<<setup, include=FALSE>>=
+library(knitr)
+
+opts_chunk$set(fig.path='figure/graphics-',
+#     cache.path='cache/graphics-',
+    fig.align='center',
+    fig.width=5, fig.height=5,
+    fig.show='asis',
+    fig.pos='H',
+    echo=FALSE,
+    message=FALSE,
+    warning=FALSE,
+    cache=FALSE,
+    par=TRUE)
+knit_hooks$set(par=function(before, options, envir){
+    if (before && options$fig.show!='none') par(mar=c(4,4,.1,.1),cex.lab=.95,cex.axis=.9,mgp=c(2,.7,0),tcl=-.3)
+}, crop=hook_pdfcrop)
+@
+%  BASE R CODE -----------------------------------------------------------------------------------
+<<packages, include=FALSE>>=
+options(scipen=10)
+
+#  Load packages
+library(ggplot2)
+library(scales)
+library(reshape2)
+library(dplyr)
+library(xtable)
+library(lubridate)
+library(ggmap)
+library(lattice)
+library(gridBase)
+library(grid)
+@
+
+
+
+%  DATA STEP ----------------------------------------------------------------------------
+<<data_step, include=FALSE>>=
+proj_dir <- '/Users/robert/Documents/UMN/air_pollution/plan/'
+data_dir <- '/Users/robert/Documents/UMN/air_pollution/data/'
+
+if ("DF.rdata" %in% list.files(proj_dir)) {
+    load(file=paste0(proj_dir, "DF.rdata"), envir=.GlobalEnv)
+} else {
+    #  1. IMPORT DATA
+    DF <- read.csv(paste0(data_dir, 'texas.csv'), stringsAsFactors=FALSE)
+
+    #  2. DATA PRE-PROCESSING FOR VARIABLES IN ALL MODELS
+    DF$Date <- ymd(DF$Date_Local)
+    DF$Date_Local <- NULL
+    DF$Year <- year(DF$Date)
+    DF$Longitude <- as.numeric(DF$Longitude)
+    DF$Latitude <- as.numeric(DF$Latitude)
+
+    # REMOVE MISSING DATA
+    by_site <- DF %>% group_by(County_Code, Site_Num, Year) %>%
+        summarise(avg_pm = mean(pm25),
+            pm10_missing = sum(is.na(pm10))/length(Site_Num),
+            pressure_missing = sum(is.na(pressure))/length(Site_Num),
+            humidity_missing = sum(is.na(RH_Dewpoint_Percent_relative_humidity))/length(Site_Num),
+            dewpoint_degreesf_missing = sum(is.na(RH_Dewpoint_Degrees_Fahrenheit))/length(Site_Num),
+            wind_speed_missing = sum(is.na(wind_Knots))/length(Site_Num),
+            wind_direction_missing = sum(is.na(wind_Degrees_Compass)) / length(Site_Num),
+            temp_missing = sum(is.na(temperature)) / length(Site_Num),
+            count = length(County_Code))
+
+    # only look at sites with less than 10% missing in some year
+    non_missing = unique(by_site[by_site$wind_speed_missing < .1 &
+            by_site$wind_direction_missing < .1 &
+            by_site$temp_missing < .1, c("County_Code", "Site_Num")])
+
+    DF <- inner_join(DF, non_missing, by = c("County_Code", "Site_Num"))
+    save(DF, file = paste0(data_dir, "DF.rdata"))
+}
+@
+
+test = inner_join(by_site, unique(DF[DF$training_metro == 1,c("County_Code", "Site_Num")]),
+    by=c("County_Code", "Site_Num"))
+as.data.frame(test[,c("County_Code", "Site_Num", "Year", "avg_pm", "pm10_missing",
+"pressure_missing", "humidity_missing", "dewpoint_degreesf_missing",
+"wind_speed_missing", "wind_direction_missing", "temp_missing",
+"count")])
+write.csv(test, file = "training_stats.csv", row.names=FALSE)
+
+<<cluster, >>=
+set.seed(20150613)
+# CLUSTERING
+agg_df <- DF %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(ct = length(pm25))
+n_clusters <- 5
+X <- as.matrix(agg_df[,1:2])
+X_mean = apply(X, 2, mean)
+X_stdev = apply(X, 2, sd)
+
+#  K-Means clustering, scale the data matrix.
+clusters <- kmeans(scale(X, center=X_mean, scale=X_stdev), n_clusters, iter.max = 100)
+
+#  Add cluster label to the data frame.
+agg_df$cluster <- factor(clusters$cluster)
+
+#  Examine the cluster averages (use unlogged, unscaled variable values).
+centers <- agg_df %>% group_by(cluster) %>%
+    summarise(Latitude = median(Latitude),
+        Longitude = median(Longitude),
+        num_unique = length(ct),
+        num = sum(ct))
+centers <- centers[order(centers$num_unique, centers$num, decreasing=TRUE),]
+
+# are there any stations that are unusually far from the center?
+agg_df <- agg_df %>% group_by(cluster) %>%
+    mutate(mean_dif = round(sqrt((Latitude - median(Latitude))^2 +
+            (Longitude - median(Longitude))^2),1))
+# if so, remove the locations
+agg_df <- agg_df[agg_df$cluster %in% centers[1:2,]$cluster &
+        agg_df$mean_dif < 3,]
+DF <- inner_join(DF, agg_df[,c("Longitude", "Latitude")], by = c("Longitude", "Latitude"))
+# recalulate centers
+centers <- agg_df %>% group_by(cluster) %>%
+    summarise(Latitude = mean(Latitude),
+        Longitude = mean(Longitude),
+        num_unique = length(ct),
+        num = sum(ct))
+centers <- centers[order(centers$num_unique, centers$num, decreasing=TRUE),]
+
+library(clue)
+pred_mat <- as.matrix(DF[,c("Latitude", "Longitude")])
+DF$cluster <- cl_predict(clusters, scale(pred_mat, center=X_mean, scale=X_stdev))
+DF$training_metro <- ifelse(DF$cluster == centers$cluster[1], 1, 0)
+DF$test_metro <- ifelse(DF$cluster == centers$cluster[2], 1, 0)
+@
+
+
+<<locations, eval=FALSE>>=
+# GET MAP
+plot_df <- agg_df[agg_df$cluster %in% centers[1:2,]$cluster,]
+map <- get_map(location = c(lon=mean(plot_df$Longitude)-1, lat=mean(plot_df$Latitude)),
+    zoom=7, maptype="toner-lite", color="bw", messaging=FALSE)
+p <- ggmap(map)
+
+map_out <- get_map(location = c(lon=mean(plot_df$Longitude), lat=mean(plot_df$Latitude)),
+    zoom=6, color="bw", maptype="roadmap")
+states <- map_data("state")
+map_out = states[states$region %in% c("texas", "oklahoma", "arkansas", "louisiana"),]
+buf=1
+small <- ggplot(data = map_out) +
+    geom_polygon(aes(x = long, y = lat, group = group), color = "dimgray", fill="white") +
+    theme_bw() +
+    theme(line=element_blank(),
+        text=element_blank(),
+        axis.ticks.margin=unit(0,"lines"),
+        plot.margin=unit(c(1,1,0,0),"mm")) +
+    labs(x=NULL, y=NULL) +
+    annotate('rect', xmin=min(plot_df$Longitude)-buf, ymin=min(plot_df$Latitude)-buf,
+        xmax=max(plot_df$Longitude)+buf, ymax=max(plot_df$Latitude)+buf,
+        colour = I('black'), alpha=0, size=1)
+
+
+# PLOT
+big <- p +
+    geom_point(data=plot_df,
+        aes(x=Longitude, y=Latitude, colour=cluster), size=3) +
+    labs(x="Longitude", y="Latitude") +
+    theme(legend.position = "none",
+        panel.border = element_rect(colour = "black", fill=NA, size=1))
+
+
+vp <- viewport(width = 0.3, height = 0.3,
+    x = .44, y = unit(2.6, "lines"),
+    just = c("right","bottom"))
+full <- function() {
+    print(big)
+    theme_set(theme_bw(base_size = 8))
+    print(small, vp = vp)
+    theme_set(theme_bw())
+ }
+full()
+
+@
+\begin{marginfigure}
+<<pdf-dev1, ref.label='locations', dev='pdf', out.width='\\linewidth'>>=
+@
+\caption{Locations of training and test air monitoring stations. Houston for training ($N$=835,815 from 14 stations), and Dallas/Fort Worth for testing ($N$=757,388 from 14 stations).\label{mar:pdf-dev1}}
+\end{marginfigure}
+
+%Thanks for the update. Once you have decided on the cities/areas and type of results you hope to generate, e.g., input/training data, predictions on what, how will be the results evaluated, etc., can you please put them in a document - max one page - so we have something concrete as a plan. This often helps in staying focused. Also, since this is just a plan, we can update/refine things as needed going forward.
+\section*{Data}
+The data come from hourly recordings of air pollution and meterological reports between 2005 through 2014. I selected two metro areas (see: figure~\ref{mar:pdf-dev1}) in Texas with a suitable sample size and minimal problems with missing data.
+
+\section*{Features}
+The majority of my features are derived by lagging (or lagging and aggregating) measurements of the target variable \texttt{pm25} (volume of particulate matter 2.5 micrometers or smaller), wind speed and direction, temperature, and pressure. Additionally, I designed date and time based features to capture seasonal averages and trends.
+
+I'm unsure whether to design spatial features (e.g. the distance of each monitoring station to $N$ pre-selected grid-points, resulting in $N$ features), or if spatial effects can be inferred automatically by the choice of model.\footnote{I've validated some additional sources of data, specifically: more meterological measurements, emissions from major businesses, population statistics (e.g. density, projected changes in population, etc). These additional sources can be added to better suit the usefulness of the project or improve model accuracy.}
+
+
+\section*{Modeling}
+The purpose of the model is two-part: first, to capture spatiotemporal interactions while accounting for meterological effects. And, secondly, to provide accurate forecasts one week to a few months or years forward in locations around monitoring stations.
+
+The approaches I'm interested in are Bayesian Hierarchical Models and the Graphical LASSO. The hierarchical model is a good fit for the problem, but may be difficult to train on larger datasets. The Graphical LASSO learns a sparse undirected graph via $L_1$ regularization. Treating the data as an undirected graph seems reasonable since the direction of influence may change due to variable interactions (e.g. wind direction). Moreover, a sparse set of features allows me to test a wide variety lagged and spatial features while keeping only the best.
+
+
+\section*{Evaluation}
+Houston will serve as the training, while Dallas/Fort Worth is reserved for testing. Cross-validation on the training set will be performed by leaving one monitoring station out at a time and evaluating the error over a sliding time window. After selecting hyper-parameters, the final performance can be determined with the same sliding window approach on the test dataset.
+
+% \begin{figure*}
+% <<pdf-dev2, ref.label='label-of-chunk', dev='pdf', out.width='\\linewidth'>>=
+% @
+% \caption{Future rates.\label{fig:pdf-dev2}}
+% \end{figure*}
+
+
+
+
+\end{document}

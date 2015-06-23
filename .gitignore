@@ -16,3 +16,4 @@ Literature/
 *.gz
 *.html
 *.pyc
+*.rdata

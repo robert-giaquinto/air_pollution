@@ -20,7 +20,7 @@ def dlfile(url, data_dir):
 		with open(data_dir + os.path.basename(url), "wb") as local_file:
 			local_file.write(f.read())
 
-	#handle errors
+	# handle errors
 	except HTTPError, e:
 		print "HTTP Error:", e.code, url
 	except URLError, e:
@@ -28,7 +28,7 @@ def dlfile(url, data_dir):
 
 
 # TODO: download the data if it has been updated
-def unzip_hourly(file_name, yr_range, data_dir, keep_region=None):
+def unzip_hourly(file_info, yr_range, data_dir, keep_region=None, return_agg=False):
 	"""
 
 	:param file_num:
@@ -36,9 +36,11 @@ def unzip_hourly(file_name, yr_range, data_dir, keep_region=None):
 	:return:
 	"""
 	dfs = []
+	file_id = file_info[0]
+	file_label = file_info[1]
 	for yr in yr_range:
 		print "\tyear:", yr
-		base_name = ("hourly_%s_%d" % (file_name, yr))
+		base_name = ("hourly_%s_%d" % (file_id, yr))
 
 		# download the data set if needed
 		if base_name + ".zip" not in os.listdir(data_dir):
@@ -49,23 +51,17 @@ def unzip_hourly(file_name, yr_range, data_dir, keep_region=None):
 		csv_file = zipfile.ZipFile(data_dir + base_name + ".zip")
 
 		# only read in certain variables
-		keep_vars = [
-			'Date Local', 'Time Local',
-			'State Code', 'County Code', 'Site Num',
-			'Sample Measurement', 'Units of Measure',
-			'Latitude', 'Longitude'
-		]
+		keep_vars = ['Date Local', 'Time Local', 'State Code', 'County Code', 'Site Num',
+			'Sample Measurement', 'Units of Measure', 'Latitude', 'Longitude']
 
 		# read in csv in the zip file using csv reader
-		df = pd.read_csv(
-			csv_file.open(base_name + ".csv"),
+		df = pd.read_csv(csv_file.open(base_name + ".csv"),
 			parse_dates=['Date Local'],
-			usecols=keep_vars
-		)
+			usecols=keep_vars)
 
 		df[['Latitude', 'Longitude']] = df[['Latitude', 'Longitude']].astype(float)
 		if keep_region is not None:
-			df = df.loc[ (df.Latitude > keep_region['lat_min']) &
+			df = df.loc[(df.Latitude > keep_region['lat_min']) &
 				(df.Latitude < keep_region['lat_max']) &
 				(df.Longitude > keep_region['lon_min']) &
 				(df.Longitude < keep_region['lon_max']), ]
@@ -88,105 +84,89 @@ def unzip_hourly(file_name, yr_range, data_dir, keep_region=None):
 		df['location_key'] = set_location_key(df.County_Code, df.Site_Num)
 
 		# aggregate stats if there are dupes
-		agg_df = df.groupby(['datetime_key', 'location_key', 'Units_of_Measure']).Sample_Measurement.agg([np.mean]).unstack().reset_index()
-		levels = agg_df.columns.levels
-		labels = agg_df.columns.labels
-		agg_df.columns = levels[1][labels[1]]
-		measurements = np.unique(df.Units_of_Measure).tolist()
-		new_names = [file_name + '_' + m.replace(' ', '_') for m in measurements]
-		agg_df.rename(columns={measurements[0]: new_names[0].lower()}, inplace=True)
-		agg_df.rename(columns={measurements[1]: new_names[1].lower()}, inplace=True)
-		uniq_df = df[['State_Code',
-			'County_Code',
-			'Site_Num',
-			'Latitude',
-			'Longitude',
-			'Date_Local',
-			'Time_Local',
-			'datetime_key',
-			'date_key',
-			'location_key']].drop_duplicates(subset=['datetime_key', 'location_key'])
-		df = pd.merge(uniq_df, agg_df, on=['datetime_key', 'location_key'], how='left')
-
-		# merge the second statistic if exists
-		# (converting data from long to wide)
+		agg_df = df.groupby(['datetime_key', 'location_key', 'Units_of_Measure']).Sample_Measurement.agg([np.mean])
 		measurements = np.unique(df.Units_of_Measure).tolist()
 		if len(measurements) > 1:
-			key_vars = ['datetime_key', 'location_key']
+			# pivot on units_of_measure, and treat indices as columns
+			# this will transform from long to wide
+			agg_df = agg_df.unstack().reset_index()
+			# fix names of columns
+			level0 = agg_df.columns.get_level_values(0)
+			level1 = agg_df.columns.get_level_values(1)
+			agg_df.columns = [file_label + '_' + level1[x].replace(' ', '_').lower()
+				if level1[x] != ''
+				else level0[x]
+				for x
+				in range(agg_df.shape[1])]
+		else:
+			# fix the name
+			agg_df.reset_index(inplace=True)
+			agg_df.rename(columns={"mean": file_label}, inplace=True)
+			agg_df.drop('Units_of_Measure', axis=1, inplace=True)
 
+		# merge aggregated measurements to the unique, non-measurement variables
+		if return_agg:
+			dfs.append(agg_df)
+		else:
+			uniq_vars = ['State_Code', 'County_Code', 'Site_Num',
+			'Latitude', 'Longitude',
+			'Date_Local', 'Time_Local',
+			'datetime_key', 'date_key', 'location_key']
+			uniq_df = df[uniq_vars].drop_duplicates(subset=['datetime_key', 'location_key'])
+			df = pd.merge(uniq_df, agg_df, on=['datetime_key', 'location_key'], how='left', sort=False)
+			# save the results
+			dfs.append(df)
 
-
-			# save all columns and one of the statistics
-			first_measure = measurements.pop()
-			temp_df = df.copy()
-			main_df = df.loc[first_measure == df.Units_of_Measure,]
-			main_df.rename(columns={'Sample_Measurement': first_measure.replace(' ', '_')}, inplace=True)
-			for m in measurements:
-				# incrementally add the remaining statistics
-				aug_df = df[m == df.Units_of_Measure][key_vars + ['Sample_Measurement']]
-				aug_df.rename(columns={'Sample_Measurement': m.replace(' ', '_')}, inplace=True)
-				main_df = pd.merge(main_df, aug_df, on=key_vars, how='inner')
-				del aug_df
-			del df
-			df = main_df
-			del main_df
-		df.drop('Units_of_Measure', axis=1, inplace=True)
-		dfs.append(df)
-
+	# return results
 	if len(yr_range) > 1:
+		# stack all the dataframes on top of one-another
 		rval = pd.concat(dfs)
 	else:
 		rval = df
-	# rval.set_index(key_vars, inplace=True)
-	# rval.sort_index(inplace=True)
 	return rval
 
 
 def merge_sources(yr_range, file_names, data_dir=os.curdir, keep_region=None):
-	key_vars = ['Date_Local', 'Time_Local', 'State_Code', 'County_Code', 'Site_Num']
-	for i, elt in enumerate(file_names):
-		print "adding feature:", elt
+	key_vars = ['datetime_key', 'location_key']
+	for i, file_info in enumerate(file_names):
+		print "adding feature:", file_info[1]
 		# recursively add features from the epa's download files
-		file_name = elt[0]  # file name
-		col_label = elt[1]  # alias in dataframe
-
 		if i == 0:
 			# initialize dataframe
-			rval = unzip_hourly(file_name=file_name, yr_range=yr_range, data_dir=data_dir, keep_region=keep_region)
-			rval.rename(columns={'Sample_Measurement': col_label}, inplace=True)
+			rval = unzip_hourly(file_info=file_info,
+				yr_range=yr_range,
+				data_dir=data_dir,
+				keep_region=keep_region)
 		else:
 			# add a new feature to the dataframe
-			feature = unzip_hourly(file_name=file_name, yr_range=yr_range, data_dir=data_dir, keep_region=keep_region)
-			feature.drop(['Latitude', 'Longitude'], axis=1, inplace=True)
-			feat_vars = [x for x in feature.columns.tolist() if x not in key_vars]
-			feat_names = {k: '_'.join([col_label, k]).replace('_Sample_Measurement', '') for k in feat_vars}
-			feature.rename(columns=feat_names, inplace=True)
-			rval = pd.merge(rval, feature, on=key_vars, how='left')
+			feature = unzip_hourly(file_info=file_info,
+				yr_range=yr_range,
+				data_dir=data_dir,
+				keep_region=keep_region,
+				return_agg=True)
+			rval = pd.merge(rval, feature, on=key_vars, how='left', sort=False)
 	return rval
 
 
-# import and merge data
-file_names = [
-	('88502', 'pm25'),
-	# ('88101', 'pm25_frm'),
-	# ('81102', 'pm10'),
-	('WIND', 'wind'),
-	('TEMP', 'temperature'),
+	# import and merge data
+file_names =[
+	('88502', 'pm25'),  # ('88101', 'pm25_frm'),  # ('81102', 'pm10'),
+	('WIND', 'wind'), ('TEMP', 'temperature' ),
 	('PRESS', 'pressure'),
-	('RH_DP', 'RH_Dewpoint'),
+	( 'RH_DP', 'RH_Dewpoint'),
 	('44201', 'ozone'),
 	('42401', 'so2'),
-	('42101', 'co'),
-	('42602', 'no2'),
+	( '42101', 'co'),
+	( '42602', 'no2'),
 	('HAPS', 'HAPs'),
 	('VOCS', 'VOCs')
 ]
 
 # Example of the region subsetting parameter
 # region = {'lat_min': 41.0,
-# 	'lat_max': 49.0,
-# 	'lon_min': -125.0,
-# 	'lon_max': -108.0}
+# 'lat_max': 49.0,
+# 'lon_min': -125.0,
+# 'lon_max': -108.0}
 
 data_dir = '/Users/robert/Documents/UMN/air_pollution/data/'
 data = merge_sources(yr_range=range(2010, 2012), file_names=file_names, data_dir=data_dir)
