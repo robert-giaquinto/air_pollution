@@ -38,7 +38,8 @@ print(xtable(by_state, type='html'))
 
 Describe the data:
 
-```{r}
+```{r, eval=FALSE}
+# TURNING THIS OFF
 describe(DF)
 ```
 

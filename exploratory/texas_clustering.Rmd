@@ -261,7 +261,8 @@ windrose <- ggplot(data = plot_df,
     scale_fill_manual(name = "Wind Speed (m/s)", 
         values = spd.colors,
         drop = FALSE) +
-    theme(axis.title.x = element_blank(), legend.position="bottom")
+    labs(y="Count", title="Direction and Speed of Wind") +
+    theme(axis.title.x = element_blank())
 print(windrose)
 ```
 

@@ -5,7 +5,7 @@ import math
 from scipy.stats import rankdata
 
 
-def import_region(region, filename='texas.csv'):
+def import_region(region, filename='all_texas.csv'):
 	if region == "houston":
 		region = {'lat_min': 29.25,
 			'lat_max': 30.35,
@@ -134,6 +134,10 @@ def datetime_to_key(date, time):
 		(pd.DatetimeIndex(date).month * 10000) +
 		(pd.DatetimeIndex(date).day * 100) +
 		time)
+	return rval
+
+def set_location_key(county, site):
+	rval = ((county * 1000000) + site)
 	return rval
 
 

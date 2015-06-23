@@ -3,3 +3,16 @@
 *.Rproj
 .Rhistory
 .Rproj.user
+.idea/
+*.png
+*.gif
+*.bmp
+*.tiff
+*.jpg
+Literature/
+*.log
+*.pdf
+*.tex
+*.gz
+*.html
+*.pyc

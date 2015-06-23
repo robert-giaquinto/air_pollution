@@ -4,11 +4,18 @@ import pandas as pd
 from helper_funcs import import_region, make_binary_features, make_cyclic_feature, date_to_key, datetime_to_key
 
 # read in the texas dataset
-df = import_region(region="houston")
+data_dir = '/Users/robert/Documents/UMN/air_pollution/data/'
+df = import_region(region="houston", filename=data_dir + 'all_texas.csv')
 df.shape
 df.columns.tolist()
 df.columns.to_series().groupby(df.dtypes).groups
+df.describe()
 
+
+df.groupby(['County_Code', 'Site_Num']).State_Code.aggregate([len])
+
+test = df.loc[df.datetime_key == 2014093023,]
+test.shape
 
 
 # build out date features
