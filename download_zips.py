@@ -151,15 +151,16 @@ def merge_sources(yr_range, file_names, data_dir=os.curdir, keep_region=None):
 	# import and merge data
 file_names =[
 	('88502', 'pm25'),  # ('88101', 'pm25_frm'),  # ('81102', 'pm10'),
-	('WIND', 'wind'), ('TEMP', 'temperature' ),
-	('PRESS', 'pressure'),
+	('WIND', 'wind'),
+	('TEMP', 'temperature'),
+	# ('PRESS', 'pressure'),
 	( 'RH_DP', 'RH_Dewpoint'),
 	('44201', 'ozone'),
 	('42401', 'so2'),
 	( '42101', 'co'),
-	( '42602', 'no2'),
-	('HAPS', 'HAPs'),
-	('VOCS', 'VOCs')
+	( '42602', 'no2')#,
+	# ('HAPS', 'HAPs'),
+	# ('VOCS', 'VOCs')
 ]
 
 # Example of the region subsetting parameter
@@ -169,7 +170,7 @@ file_names =[
 # 'lon_max': -108.0}
 
 data_dir = '/Users/robert/Documents/UMN/air_pollution/data/'
-data = merge_sources(yr_range=range(2010, 2012), file_names=file_names, data_dir=data_dir)
+data = merge_sources(yr_range=range(2000, 2015), file_names=file_names, data_dir=data_dir)
 print "done downloading and merging"
 
 # write to csv file

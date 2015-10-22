@@ -1,21 +1,38 @@
 from __future__ import division
 import numpy as np
 import pandas as pd
-from helper_funcs import import_region, make_binary_features, make_cyclic_feature, date_to_key, datetime_to_key
+from helper_funcs import *
+
 
 # read in the texas dataset
 data_dir = '/Users/robert/Documents/UMN/air_pollution/data/'
 df = import_region(region="houston", filename=data_dir + 'all_texas.csv')
-df.shape
-df.columns.tolist()
-df.columns.to_series().groupby(df.dtypes).groups
-df.describe()
 
 
-df.groupby(['County_Code', 'Site_Num']).State_Code.aggregate([len])
+# impute missing values with the average on a particular datetime
+impute_vars = ['wind_degrees_compass', 'wind_knots', 'temperature', 'dewpoint', 'pct_humidity', 'ozone', 'so2', 'co', 'no2']
+for var in impute_vars:
+	print "Pct Missing in", var + ":", round(df[var].isnull().sum()/len(df)*100, 1)
+	df[var] = df.groupby("datetime_key")[var].transform(lambda x: x.fillna(x.mean()))
+	print "\tReduced to:", round(df[var].isnull().sum()/len(df)*100, 1)
 
-test = df.loc[df.datetime_key == 2014093023,]
-test.shape
+# if anything is still missing, average over the entire day and all locations
+impute_vars = ['dewpoint', 'pct_humidity', 'ozone', 'so2', 'co', 'no2']
+for var in impute_vars:
+	print "Pct Missing in", var + ":", round(df[var].isnull().sum()/len(df)*100, 1)
+	df[var] = df.groupby("date_key")[var].transform(lambda x: x.fillna(x.mean()))
+	print "\tReduced to:", round(df[var].isnull().sum()/len(df)*100, 1)
+
+# if anything is still missing, average over the entire locations
+impute_vars = ['dewpoint', 'pct_humidity', 'so2', 'co', 'no2']
+for var in impute_vars:
+	print "Pct Missing in", var + ":", round(df[var].isnull().sum()/len(df)*100, 1)
+	df[var] = df.groupby("location_key")[var].transform(lambda x: x.fillna(x.mean()))
+	print "\tReduced to:", round(df[var].isnull().sum()/len(df)*100, 1)
+
+# any missings left?
+for var in df.columns.tolist():
+	print "Num Missing in", var + ":", df[var].isnull().sum()
 
 
 # build out date features
@@ -38,35 +55,54 @@ df['month'] = pd.DatetimeIndex(df.Date_Local).month
 df['month_cycle'] = make_cyclic_feature(df.month)
 df = make_binary_features(df, 'month')
 
-df['day'] = pd.DatetimeIndex(df.Date_Local).day
-df['day_cycle'] = make_cyclic_feature(df.day)
-df = make_binary_features(df, 'day')
+df['day_of_month'] = pd.DatetimeIndex(df.Date_Local).day
+df['day_of_month_cycle'] = make_cyclic_feature(df.day_of_month)
+df = make_binary_features(df, 'day_of_month')
 
 df['quarter'] = pd.DatetimeIndex(df.Date_Local).quarter
 df['quarter_cycle'] = make_cyclic_feature(df.quarter)
 df = make_binary_features(df, 'quarter')
 
+df['time_cycle'] = make_cyclic_feature(df.Time_Local)
+df = make_binary_features(df, 'Time_Local')
 
-# build lagged versions of a variable
-feat_var = 'pm25'
-lag_days = 5
-# df['lagged_date'] = pd.DatetimeIndex(df.Date_Local) - pd.DateOffset(lag_days)
-df['lagged_datetime_key'] = df.datetime_key - lag_days
-lagged_data = df[['datetime_key', 'location_key', feat_var]]
-df = pd.merge(df, lagged_data, how="left",
-	left_on=['lagged_datetime_key', 'location_key'],
-	right_on=['datetime_key', 'location_key'],
-	suffixes=('', '_lag' + str(lag_days)),
-	sort=False)
-df.drop(['lagged_datetime_key', 'datetime_key_lag5'], axis=1, inplace=True)
+# convert wind direction to two cyclic variables
+df['wind_direction_sin'] = np.sin(math.pi * df.wind_degrees_compass / 180.0)
+df['wind_direction_cos'] = np.cos(math.pi * df.wind_degrees_compass / 180.0)
+df['wind_direction_NE'] = np.where(df['wind_degrees_compass'] < 90, 1, 0)
+df['wind_direction_SE'] = np.where((df['wind_degrees_compass'] >= 90) & (df['wind_degrees_compass'] < 180), 1, 0)
+df['wind_direction_SW'] = np.where((df['wind_degrees_compass'] >= 180) & (df['wind_degrees_compass'] < 270), 1, 0)
+df['wind_direction_NW'] = np.where(df['wind_degrees_compass'] >= 270, 1, 0)
+
+lag_vars = ['pm25', 'wind_direction_sin', 'wind_direction_cos', 'wind_knots', 'temperature',
+	'dewpoint', 'pct_humidity', 'ozone', 'so2', 'co', 'no2']
+
+for var in lag_vars:
+	# lagged features
+	print "beginning to add ", var, "lagged features..."
+	df = lag_feature(df, var, 1)
+	df = lag_feature(df, var, 2)
+	df = lag_feature(df, var, 3)
+	df = lag_feature(df, var, 4)
+	df = lag_feature(df, var, 5)
+	# lagged moving averages
+	print "\tand now adding the lagged and averaged version"
+	df = lag_avg_feature(df, feat_var=var, lag_days=1, window=1, window_units='days')
+	df = lag_avg_feature(df, feat_var=var, lag_days=2, window=1, window_units='days')
+	df = lag_avg_feature(df, feat_var=var, lag_days=3, window=1, window_units='days')
+	df = lag_avg_feature(df, feat_var=var, lag_days=4, window=1, window_units='days')
+	df = lag_avg_feature(df, feat_var=var, lag_days=5, window=1, window_units='days')
 
 
-test = date_to_key(df.Date_Local)
-test = datetime_to_key(df.Date_Local, df.Time_Local)
+df.to_csv(data_dir + 'houston_features.csv', index=False)
 
-test.columns
-test.shape
-df.shape
+# df.shape
+# df.columns.tolist()
+# df.columns.to_series().groupby(df.dtypes).groups
+# df.describe()
+
+
+# TODO: spatial features, pick random locations, compute distance from each station to the locations
 
 
 
