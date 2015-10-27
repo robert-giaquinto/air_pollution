@@ -3,14 +3,10 @@
 
 Lasso <- function(DF, var_list, num_lambdas=50,
     testing_months=3, training_months=12,
-    num_cores=4, verbose=FALSE)
+    verbose=FALSE)
 {
     require(glmnet)
     require(glmnetUtils)
-    if (num_cores > 1) {
-        require(doMC)
-        registerDoMC(cores=num_cores)
-    }
 
     # define a range of lambdas to test different regularization
     lambdas <- lambda_sequence(num_lambdas)
@@ -136,10 +132,6 @@ Lasso <- function(DF, var_list, num_lambdas=50,
         # combine results from each window
         all_results[[loc]] <- bind_rows(hourly_results)
     }
-    if (num_cores > 1) {
-        # close out parallel clusters
-        stopCluster(cl)
-    }
 
     # hourly level data:
     all_hourly_df  <- bind_rows(all_results)
@@ -148,10 +140,9 @@ Lasso <- function(DF, var_list, num_lambdas=50,
     # find rmse for each lambda
     error_names <- c(paste0("error", 1:num_lambdas), "error_null")
     temp <- all_hourly_df[,c("set", error_names)]
-    temp[,error_names] <- temp[,error_names]^2
-    rmse <- temp %>% group_by(set) %>% summarise_each(funs(sqrt_mean))
+    rmses <- temp %>% group_by(set) %>% summarise_each(funs(rmse))
     # join the lambda value to each rmse
-    rmse_long <- melt(rmse)
+    rmse_long <- melt(rmses)
     names(rmse_long) <- c("set", "error_id", "rmse")
     rmse_long$lambda_id <- str_replace(rmse_long$error_id, fixed("error"), "lambda")
     lambda_df <- data.frame(lambda_id=paste0("lambda", 1:num_lambdas), lambda_val=lambdas)

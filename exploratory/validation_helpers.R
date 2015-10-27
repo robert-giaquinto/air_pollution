@@ -32,9 +32,9 @@ split_dates <- function(dates, train_start, training_months=12, testing_months=3
 
 lambda_sequence <- function(num_lambdas, decreasing=TRUE) {
     if (decreasing)
-        rval <- exp(seq(0, -9, length.out=num_lambdas))
+        rval <- exp(seq(-0.1, -7, length.out=num_lambdas))
     else
-        rval <- exp(seq(-9, 0, length.out=num_lambdas))
+        rval <- exp(seq(-7, -0.1, length.out=num_lambdas))
 
     return(rval)
 }
@@ -48,3 +48,5 @@ count_sliding_windows <- function(train_start, max_date, training_months, testin
 }
 
 sqrt_mean <- function(x) sqrt(mean(x))
+
+rmse <- function(x) sqrt(mean(x^2))

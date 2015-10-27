@@ -113,13 +113,6 @@ if ("DF.rdata" %in% list.files(proj_dir)) {
 }
 @
 
-test = inner_join(by_site, unique(DF[DF$training_metro == 1,c("County_Code", "Site_Num")]),
-    by=c("County_Code", "Site_Num"))
-as.data.frame(test[,c("County_Code", "Site_Num", "Year", "avg_pm", "pm10_missing",
-"pressure_missing", "humidity_missing", "dewpoint_degreesf_missing",
-"wind_speed_missing", "wind_direction_missing", "temp_missing",
-"count")])
-write.csv(test, file = "training_stats.csv", row.names=FALSE)
 
 <<cluster, >>=
 set.seed(20150613)

@@ -4,19 +4,14 @@ Graphical_Lasso <- function(DF, var_list, num_lambdas=50,
     testing_months=3, training_months=12, verbose=FALSE, cov_methods=c("pearson", "spearman"))
 {
     require(glasso)
-    # define a range of lambdas to test different regularization
-    lambdas <- lambda_sequence(num_lambdas, decreasing=FALSE)
-
     # unpack variable list
     tar_var <- var_list$tar_var
     agg_vars <- var_list$agg_vars
     lag_vars <- var_list$lag_vars
     date_vars <- var_list$date_vars
     model_vars <- c(date_vars, lag_vars, agg_vars, tar_var)
-
-    # split up training and test locations
-    location_splits <- split_locations(DF$location_key, 1)
-    num_locs <- length(location_splits)
+    # locations <- sort(unique(DF$location_key))
+    # num_locs <- length(locations)
 
     # Determine the number of sliding windows to capture results from
     dates <- ymd(DF$date_key)
@@ -30,158 +25,125 @@ Graphical_Lasso <- function(DF, var_list, num_lambdas=50,
             " windows, each ", testing_months," months\n"))
         cat(paste(rep("-", 80), collapse=""))
     }
+    train_start <- min_date # train start will be incremented
 
-    # initialize containers to store results
-    all_results <- vector("list", num_locs)
-    for (loc in 1:num_locs) {
-        # split data into test and training based on the location
-        train_start <- min_date
-        known_df <- DF[location_splits[[loc]],]
-        unknown_df <- DF[-location_splits[[loc]],]
+    # save the lambda values used for each window and covariance method
+    lambda_df <- expand.grid(window=1:num_windows, cov_methods)
+    lambda_df <- cbind(lambda_df, matrix(rep(NA, nrow(lambda_df) * num_lambdas), nrow=nrow(lambda_df)))
+    names(lambda_df) <- c("window", "cov_methods", paste0("lambda", 1:num_lambdas))
 
-        if (verbose)
-            cat(paste0("\n\nLOCATION ", loc, "."))
-
-        # for each window store the average prediction error
-        hourly_results <- vector("list", num_windows)
-        for (window in 1:num_windows) {
-            if (verbose) {
-                test_start <- train_start %m+% months(training_months)
-                test_end <- test_start %m+% months(testing_months)
-                cat(paste0("\n  WINDOW ", window,
-                    ". Train: [", train_start, ", ", test_start,
-                    "). Test: [", test_start, ", ", test_end, ")"))
-            }
-
-            # split the training dataset from known locations to training and future datasets
-            known_splits <- split_dates(ymd(known_df$date_key),
-                train_start, training_months, testing_months)
-            model_set <- as.matrix(known_df[known_splits$in_train, model_vars])
-            future_set <- as.matrix(known_df[known_splits$in_test, model_vars])
-            p <- ncol(model_set) - 1
-
-            # pull out future data from unknow location
-            unknown_splits <- split_dates(ymd(unknown_df$date_key),
-                train_start, training_months, testing_months)
-            unknown_set <- as.matrix(unknown_df[unknown_splits$in_test, model_vars])
-
-            # save location ids
-            future_loc_keys <- known_df[known_splits$in_test, "location_key"]
-            unknown_loc_keys <- unknown_df[unknown_splits$in_test, "location_key"]
-            future_dt_keys <- known_df[known_splits$in_test, "datetime_key"]
-            unknown_dt_keys <- unknown_df[unknown_splits$in_test, "datetime_key"]
-
-            # train model on all combinations of interactions
-            graphical_lasso <- train_glasso(x=model_set[,1:p], y=model_set[,p+1],
-                lambdas,
-                cov_methods=cov_methods,
-                rescale=TRUE, standardize=TRUE)
-            null_model <- mean(model_set[,p+1])
-
-            # predict on the future window for training locations (i.e. future set)
-            future_predict <- predict(graphical_lasso, newx=future_set[,1:p])
-            future_list <- lapply(seq(dim(future_predict)[3]), function(x) {
-                temp_predicts <- as.data.frame(future_predict[ , , x])
-                names(temp_predicts) <- paste0("predict", 1:num_lambdas)
-                temp_predicts$predict_null <- null_model
-
-                temp_errors <- as.data.frame(future_set[,p+1] - future_predict[ , , x])
-                names(temp_errors) <- paste0("error", 1:num_lambdas)
-                temp_errors$error_null <- future_set[,p+1] - null_model
-
-                temp_keys <- data.frame(location = future_loc_keys,
-                    datetime_key = future_dt_keys,
-                    window,
-                    set = "future",
-                    cov_method = cov_methods[x],
-                    actual = future_set[,tar_var])
-                rval <- cbind(temp_keys, temp_predicts, temp_errors)
-                return(rval)
-            })
-            future_results <- bind_rows(future_list)
-
-            # predict on the future window for test locations (i.e. unknown set)
-            unknown_predict <- predict(graphical_lasso, newx=unknown_set[,1:p])
-            unknown_list <- lapply(seq(dim(unknown_predict)[3]), function(x) {
-                temp_predicts <- as.data.frame(unknown_predict[ , , x])
-                names(temp_predicts) <- paste0("predict", 1:num_lambdas)
-                temp_predicts$predict_null <- null_model
-
-                temp_errors <- as.data.frame(unknown_set[,p+1] - unknown_predict[ , , x])
-                names(temp_errors) <- paste0("error", 1:num_lambdas)
-                temp_errors$error_null <- unknown_set[,p+1] - null_model
-
-                temp_keys <- data.frame(location = unknown_loc_keys,
-                    datetime_key = unknown_dt_keys,
-                    window,
-                    set = "unknown",
-                    cov_method = cov_methods[x],
-                    actual = unknown_set[,tar_var])
-                rval <- cbind(temp_keys, temp_predicts, temp_errors)
-                return(rval)
-            })
-            unknown_results <- bind_rows(unknown_list)
-
-            # combine results
-            hourly_results[[window]] <- rbind(future_results, unknown_results)
-
-            # increment the start date and model id
-            train_start <- train_start %m+% months(testing_months)
+    # for each window store the average prediction error
+    window_results <- vector("list", num_windows)
+    for (window in 1:num_windows) {
+        if (verbose) {
+            test_start <- train_start %m+% months(training_months)
+            test_end <- test_start %m+% months(testing_months)
+            cat(paste0("\nWINDOW ", window,
+                ". Train: [", train_start, ", ", test_start,
+                "). Test: [", test_start, ", ", test_end, ")"))
         }
 
-        # combine results from each window
-        all_results[[loc]] <- bind_rows(hourly_results)
+        # split the training dataset from known locations to training and future datasets
+        known_splits <- split_dates(ymd(DF$date_key),
+            train_start, training_months, testing_months)
+        model_set <- as.matrix(DF[known_splits$in_train, model_vars])
+        future_set <- as.matrix(DF[known_splits$in_test, model_vars])
+        p <- ncol(model_set) - 1
+
+        # save location and date ids
+        future_keys <- DF[known_splits$in_test, c("datetime_key", "location_key", "Latitude", "Longitude")]
+
+        # train model on all combinations of interactions
+        graphical_lasso <- train_glasso_rank(x=model_set[,1:p], y=model_set[,p+1],
+            num_lambdas=num_lambdas,
+            cov_methods=cov_methods,
+            rescale_betas=TRUE, standardize_input=TRUE)
+        # save lambdas
+        for (cm in 1:length(cov_methods)) {
+            lambda_df[lambda_df$window == window &
+                    lambda_df$cov_methods == cov_methods[cm],
+                (ncol(lambda_df)-num_lambdas+1):ncol(lambda_df)] <- graphical_lasso$lambda_list[[cm]]
+        }
+        # save null model
+        null_model <- mean(model_set[,p+1])
+
+        # predict on the future window for training locations (i.e. future set)
+        future_predict <- predict(graphical_lasso, newx=future_set[,1:p])
+        future_list <- lapply(seq(dim(future_predict)[3]), function(x) {
+            temp_predicts <- as.data.frame(future_predict[ , , x])
+            names(temp_predicts) <- paste0("predict", 1:num_lambdas)
+            temp_predicts$predict_null <- null_model
+            temp_errors <- as.data.frame(future_set[,p+1] - future_predict[ , , x])
+            names(temp_errors) <- paste0("error", 1:num_lambdas)
+            temp_errors$error_null <- future_set[,p+1] - null_model
+            temp_keys <- data.frame(window, cov_methods = cov_methods[x], actual = future_set[,tar_var])
+            rval <- cbind(future_keys, temp_keys, temp_predicts, temp_errors)
+            return(rval)
+        })
+        window_results[[window]] <- bind_rows(future_list)
+
+        # increment the start date and model id
+        train_start <- train_start %m+% months(testing_months)
     }
 
-    # hourly level data:
-    all_hourly_df  <- bind_rows(all_results)
-    rm(all_results)
+    # combine results from each window
+    all_hourly_df <- bind_rows(window_results)
+    rm(window_results)
 
-    # find rmse for each lambda by set and covariance method
+    # find rmse for each lambda by covariance method
     error_names <- c(paste0("error", 1:num_lambdas), "error_null")
-    temp <- all_hourly_df[,c("set", "cov_method", error_names)]
-    temp[,error_names] <- temp[,error_names]^2
-    rmse <- temp %>% group_by(set, cov_method) %>% summarise_each(funs(sqrt_mean))
+    temp <- all_hourly_df[, c("cov_methods", "window", error_names)]
+    temp[,error_names] <- temp[,error_names]
+    # aggregate error to find rmse for each of the training+test runs
+    rmses <- temp %>% group_by(cov_methods, window) %>% summarise_each(funs(rmse))
     # join the lambda value to each rmse
-    rmse_long <- melt(rmse)
-    names(rmse_long) <- c("set", "cov_method", "error_id", "rmse")
+    rmse_long <- melt(rmses, id.vars=c("cov_methods", "window"))
+    names(rmse_long) <- c("cov_methods", "window", "error_id", "rmse")
     rmse_long$lambda_id <- str_replace(rmse_long$error_id, fixed("error"), "lambda")
-    lambda_df <- data.frame(lambda_id=paste0("lambda", 1:num_lambdas), lambda_val=lambdas)
-    rmse_df <- left_join(x=rmse_long, y=lambda_df, by="lambda_id")
+    # transform lambda_df into a long df for easier merging
+    lambda_long <- melt(lambda_df, id.vars=c("window", "cov_methods"))
+    names(lambda_long) <- c("window", "cov_methods", "lambda_id", "lambda_val")
+    temp <- sapply(lambda_long, is.factor)
+    lambda_long[temp] <- lapply(lambda_long[temp], as.character)
+    rmse_df <- left_join(x=rmse_long, y=lambda_long, by=c("window", "cov_methods", "lambda_id"))
     rmse_df$error_id <- NULL
 
-    # use rmse to find best lambda and covariance method
-    best_parameters <- rmse_df[rmse_df$rmse == min(rmse_df$rmse) &
-            rmse_df$lambda_id != "lambda_null" &
-            rmse_df$set == "future", c("lambda_val", "cov_method")]
-    best_lambda <- best_parameters[1,1]
-    best_cov_method <- best_parameters[1,2]
+    # use rmse to find best lambda and covariance method across windows
+    rmse_agg <- rmse_df %>% group_by(cov_methods, lambda_id) %>%
+        summarise(Avg_RMSE=mean(rmse), StDev_RMSE=sd(rmse), Lambda=mean(lambda_val))
+
+    best_error <- min(rmse_agg[rmse_agg$lambda_id != "lambda_null", "Avg_RMSE"])
+    best_parameters <- rmse_agg[rmse_agg$Avg_RMSE == best_error &
+            rmse_agg$lambda_id != "lambda_null", c("Lambda", "cov_methods", "lambda_id")]
+    best_lambda <- best_parameters$Lambda
+    best_cov_method <- best_parameters$cov_methods
+    best_lambda_id <- as.numeric(str_replace(best_parameters$lambda_id, "lambda", ""))
 
     # package results
     rval <- list(rmse_df=rmse_df,
         all_hourly_df=all_hourly_df,
+        rmse_agg=rmse_agg,
         best_lambda=best_lambda,
         best_cov_method=best_cov_method,
+        best_lambda_id=best_lambda_id,
+        lambdas=lambda_long,
         num_lambdas=num_lambdas)
     class(rval) <- "Graphical_Lasso"
     return(rval)
 }
 
-# fit method for graphical lasso
-train_glasso <- function(x, y, lambdas,
-    cov_methods=c("pearson","spearman"), rescale=TRUE, standardize=TRUE, ...)
+
+
+
+train_glasso_rank <- function(x, y, num_lambdas,
+    cov_methods=c("pearson","spearman"),
+    rescale_betas=TRUE, standardize_input=TRUE, verbose=TRUE)
 {
-    require(glasso)
-    # TODO:
-    # check that x and y are valid
-
-    # TODO:
-    # check that lamdas are valid and increasing
-
+    require(huge)
     # center and scale the data
     meany <- mean(y)
     meanx <- colMeans(x)
-    if(standardize){
+    if(standardize_input){
         sdy <- sd(y)
         sdx <- apply(x, 2, sd)
         x <- scale(x, center=TRUE, scale=TRUE)
@@ -192,38 +154,37 @@ train_glasso <- function(x, y, lambdas,
         sdy <- 1
     }
     y <- (y - meany) / sdy
-
-    num_lambdas <- length(lambdas)
     betamat <- array(NA, dim=c(ncol(x), num_lambdas, length(cov_methods)))
+    lambda_list <- vector(length(cov_methods), mode="list")
     for (i in 1:length(cov_methods)) {
-        cat(paste0("\nTraining using method=", cov_methods[i], ":\nLambda: "))
-        covx <- cov(x, method=cov_methods[i])
+        if (verbose) {
+            cat(paste0("\nTraining using method=", cov_methods[i],
+                "\nFinding Betas for lambda sequence:\n"))
+        }
+        cov_x <- cov(x, method=cov_methods[i])
+        if (cov_methods[i] == "pearson") {
+            lambdas <- lambda_sequence(num_lambdas, decreasing=TRUE)
+            model <- huge(cov_x, lambda=lambdas, cov.output=TRUE,  method="glasso", verbose=FALSE)
+        } else {
+            model <- huge(cov_x, nlambda=num_lambdas, cov.output=TRUE,  method="glasso", verbose=FALSE)
+        }
+        lambda_list[[i]] <- model$lambda
         for (j in 1:num_lambdas) {
-            cat(paste0(j, ", "))
-            model <- NULL
-            if (j == 1 || is.null(model$w) || is.null(model$wi)) {
-                if (lambdas[j] != 0) model <- glasso::glasso(covx, rho=lambdas[j])
-                if (lambdas[j] == 0) model <- list(w=covx, wi=NULL)
-            } else if (j != 1 && !is.null(model$w) && !is.null(model$wi)) {
-                model <- glasso::glasso(covx,
-                    rho=lambdas[j],
-                    start="warm",
-                    w.init=model$w,
-                    wi.init=model$wi)
-            }
-            beta <- model$wi %*% cov(x,y, method=cov_methods[i])
+            if (verbose) cat(paste0(j, " "))
+            cov_xy <- cov(x, y, method=cov_methods[i])
+            beta <- model$icov[[j]] %*% cov_xy
             # rescale the betas
-            if (rescale && sum(abs(beta)) != 0) {
+            if (rescale_betas && sum(abs(beta)) != 0) {
                 beta <- beta * lsfit(x %*% beta, y, intercept=FALSE)$coef
             }
             # save betas
-            betamat[, j, i] <- beta
+            betamat[, j, i] <- as.matrix(beta)
         }
     }
 
     # calculate intercepts
-    interceptmat <- matrix(meany, nrow=length(lambdas) , ncol=length(cov_methods))
-    for (m in 1:length(lambdas)) {
+    interceptmat <- matrix(meany, nrow=num_lambdas, ncol=length(cov_methods))
+    for (m in 1:num_lambdas) {
         for (n in 1:length(cov_methods)) {
             interceptmat[m, n] <- interceptmat[m, n] - sum((sdy * meanx / sdx) * betamat[,m,n])
         }
@@ -231,11 +192,15 @@ train_glasso <- function(x, y, lambdas,
     betamat <- sweep(betamat, 1, sdy / sdx, "*")
     rval <- list(intercepts=interceptmat,
         coefficients=betamat,
-        lambdas=lambdas,
-        cov_methods=cov_methods)
+        num_lambdas=num_lambdas,
+        cov_methods=cov_methods,
+        lambda_list=lambda_list)
     class(rval) <- "train_glasso"
     return(rval)
 }
+
+
+
 
 # prediction method for the fit model
 # TODO: this should predict on any type of glasso object (evaluation, training, final, etc)
@@ -247,8 +212,7 @@ predict.train_glasso <- function(object, newx, ...) {
         stop("newx must be a matrix")
 
     graphical_lasso <- object
-    lambdas <- graphical_lasso$lambdas
-    num_lambdas <- length(lambdas)
+    num_lambdas <- graphical_lasso$num_lambdas
     interceptmat <- graphical_lasso$intercepts
     betamat <- graphical_lasso$coefficients
     cov_methods <- graphical_lasso$cov_methods
@@ -263,17 +227,10 @@ predict.train_glasso <- function(object, newx, ...) {
 }
 
 
-# METHODS FOR EVALUATING
-
-# TODO: refit final glasso with optimal parameters
-
-# TODO predict method for final model
-
-
-
-
-plot_error_curve.Graphical_Lasso <- function(object, set, ...) {
+plot_error_curve.Graphical_Lasso <- function(object, ...) {
     require(ggplot2)
+    require(grid)
+    require(gridExtra)
     require(dplyr)
     require(stringr)
 
@@ -281,89 +238,79 @@ plot_error_curve.Graphical_Lasso <- function(object, set, ...) {
         stop("must provide object of type Graphical_Lasso")
 
     # unpack the Graphical_Lasso object
-    rmse_df <- object$rmse_df
+    rmse_agg <- object$rmse_agg
 
-    # pull out the correct set
-    rmse_set <- rmse_df[rmse_df$set == set & rmse_df$lambda_id != "lambda_null",]
-    null_rmse <- round(unique(rmse_df[rmse_df$set == set & rmse_df$lambda_id == "lambda_null", "rmse"]),2)
+    # find null performance
+    null_rmse <- unique(rmse_agg[rmse_agg$lambda_id == "lambda_null",c("Avg_RMSE", "StDev_RMSE")])
+    null_label <- paste0("Null RMSE: ", round(null_rmse$Avg_RMSE, 2), " (+/-", round(null_rmse$StDev_RMSE,2),")")
 
-    # identify the best value of lambda for the specified set
-    best_lambda <- rmse_set[rmse_set$rmse == min(rmse_set$rmse), "lambda_val"]
-    if (length(best_lambda) > 1) best_lambda <- best_lambda[1]
-    best_cov_method <- rmse_set[rmse_set$rmse == min(rmse_set$rmse), "cov_method"]
-    if (length(best_cov_method) > 1) best_cov_method <- best_cov_method[1]
-    rmse_set$highlight <- factor(ifelse(rmse_set$lambda_val == best_lambda &
-            rmse_set$cov_method == best_cov_method,
+    # extract avg rmse by lambda and label the best results
+    rmse_set <- rmse_agg[rmse_agg$lambda_id != "lambda_null",]
+    rmse_set$highlight <- factor(ifelse(rmse_set$Lambda == object$best_lambda &
+            rmse_set$cov_methods == object$best_cov_method,
         "Optimal",
         "Sub-Optimal"))
-    plot_title <- paste0("RMSE Across Windows and Locations\nFor Each Lambda and Method of Covariance Used for ",
-        str_to_title(set), " Set")
 
-    # plot the mean absolute rmse
+    # plot
     mycolours <- c("Optimal" = "red", "Sub-Optimal" = "grey50")
-    null_label <- paste0("Null RMSE: ", null_rmse)
-    rval <- ggplot(rmse_set, aes(x=lambda_val, y=rmse)) +
-        annotate("text", x=quantile(rmse_set$lambda_val, probs=.25),
-            y=quantile(rmse_set$rmse, probs=.99),
-            label=null_label) +
+    plot_title <- paste0("RMSE Averaged Over Sliding Windows and Locations\n",
+        "For Each Lambda and Method of Covariance Calculation")
+    cov_methods <- unique(rmse_set$cov_methods)
+    plot_list <- vector(ceiling(sqrt(length(cov_methods))), mode="list")
+    p1 <- ggplot(rmse_set, aes(x=Lambda, y=Avg_RMSE)) +
+        geom_errorbar(aes(ymax = Avg_RMSE + StDev_RMSE, ymin=Avg_RMSE - StDev_RMSE, colour=highlight)) +
         geom_point(aes(colour=highlight), size=2.5) +
         geom_line() +
         scale_color_manual("Status: ", values=mycolours) +
-        scale_x_log10(breaks=c(0.001, .01, .1, 1)) +
-        coord_trans(y = "log10") +
-        labs(x="Lambda",
+        labs(x="Model Complexity",
             y="RMSE",
             title=plot_title) +
         theme_bw() +
-        theme(legend.position="bottom") +
-        facet_wrap(~cov_method)
+        theme(legend.position="bottom", axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
+        facet_wrap(~cov_methods, scales="free_x")
+    rval <- list(p1=p1, null_label=null_label)
     return(rval)
+}
+
+squared_distance <- function(lat_dif, long_dif) {
+    return(sqrt(lat_dif^2 + long_dif^2))
+}
+
+gaussian_kernel <- function(x, sigma) {
+    return(1/(sqrt(2 * pi) * sigma) * exp(-1 * x^2 / (2 * sigma^2)))
 }
 
 
 
-
-plot_error_distribution.Graphical_Lasso <- function(object, split_by, ...) {
+plot_error_distribution.Graphical_Lasso <- function(object, ...)
+{
     if (class(object) != "Graphical_Lasso")
         stop("must provide object of type Graphical_Lasso")
-
-    # unpack the Graphical_Lasso object
-    all_hourly_df <- object$all_hourly_df
-    num_lambdas <- object$num_lambdas
-
-    temp <- all_hourly_df[, c("location", "window", "set", "cov_method", paste0("error", 1:num_lambdas))]
-    temp[,paste0("error", 1:num_lambdas)] <- temp[,paste0("error", 1:num_lambdas)]^2
-    rmse <- temp %>% group_by(location, window, set, cov_method) %>% summarise_each(funs(sqrt_mean))
-    # join the lambda value to each rmse
-    rmse_long <- melt(rmse, id.vars=c("location", "window", "set", "cov_method"))
-    rmse_long$lambda_id <- str_replace(rmse_long$variable, fixed("error"), "lambda")
-    lambda_df <- data.frame(lambda_id=paste0("lambda", 1:num_lambdas),
-        lambda_val=lambda_sequence(num_lambdas))
-    rmse_df <- left_join(x=rmse_long, y=lambda_df, by="lambda_id")
-    best_errors <- rmse_df[rmse_df$lambda_val == object$best_lambda &
-            rmse_df$cov_method == object$best_cov_method,]
-    best_errors[,split_by] <- factor(best_errors[,split_by])
-
-    plot_title <- paste0("Distribution of Error Across ", str_to_title(split_by))
-    rval <- ggplot(best_errors, aes_string(x="value", colour=split_by)) +
+    rval <- ggplot(object$rmse_df, aes(x=rmse, colour=factor(window))) +
         geom_density() +
         labs(x="RMSE",
             y="Density",
-            title="Distribution of Error Across Locations") +
+            title="Distribution of Error By Sliding Windows") +
         theme_bw() +
         theme(legend.position="none") +
-        facet_wrap(~set, scales="free_y", nrow=2)
+        facet_wrap(~cov_methods)
     return(rval)
 }
 
 
-plot_spatial_correlation_Glasso <- function(best_errors, set, n_breaks=10) {
+plot_spatial_correlation.Graphical_Lasso <- function(object, n_breaks=10, ...) {
+    best_error_key <- paste0("error", object$best_lambda_id)
+    keep_vars <- c("location_key", "datetime_key", best_error_key)
+    all_hourly_df <- object$all_hourly_df[,keep_vars]
+    names(all_hourly_df) <- c(keep_vars[1:2], "error")
+
+    # calculate rms by place and time
+    temp <- all_hourly_df %>% group_by(location_key, datetime_key) %>%
+        summarise(RMSE = rmse(error))
     # put the errors in wide format
-    temp <- best_errors[best_errors$set == set, c("location", "datetime_key", "error")]
-    temp <- temp %>% group_by(location, datetime_key) %>% summarise(rmse = sqrt_mean(error^2))
-    wide_error <- dcast(temp, datetime_key~location, value.var="rmse")
-    # if there wasn't a prediction made at a certain time for a location
-    # drop the the row from all other locations too
+    wide_error <- dcast(temp, datetime_key~location_key, value.var="RMSE")
+    # if there wasn't a prediction made at a certain time for a location_key,
+    # then drop the the row from all other locations too
     wide_error <- wide_error[complete.cases(wide_error), ]
     wide_error$datetime_key <- NULL
 
