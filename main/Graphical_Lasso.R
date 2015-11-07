@@ -270,7 +270,6 @@ plot_error_curve.Pooled_Glasso <- function(object, ...) {
     plot_title <- paste0("RMSE Averaged Over Sliding Windows and Locations\n",
         "For Each Lambda and Method of Covariance Calculation")
     cov_methods <- unique(rmse_set$cov_methods)
-    plot_list <- vector(ceiling(sqrt(length(cov_methods))), mode="list")
     p1 <- ggplot(rmse_set, aes(x=Lambda, y=Avg_RMSE)) +
         geom_errorbar(aes(ymax = Avg_RMSE + StDev_RMSE, ymin=Avg_RMSE - StDev_RMSE, colour=highlight)) +
         geom_point(aes(colour=highlight), size=2.5) +
@@ -286,13 +285,7 @@ plot_error_curve.Pooled_Glasso <- function(object, ...) {
     return(rval)
 }
 
-squared_distance <- function(lat_dif, long_dif) {
-    return(sqrt(lat_dif^2 + long_dif^2))
-}
 
-gaussian_kernel <- function(x, sigma) {
-    return(1/(sqrt(2 * pi) * sigma) * exp(-1 * x^2 / (2 * sigma^2)))
-}
 
 
 
@@ -347,6 +340,4 @@ plot_spatial_correlation.Pooled_Glasso <- function(object, n_breaks=10, ...) {
             y="Location")
     return(rval)
 }
-
-
 

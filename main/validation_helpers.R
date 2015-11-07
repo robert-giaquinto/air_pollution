@@ -47,6 +47,14 @@ count_sliding_windows <- function(train_start, max_date, training_months, testin
     return(num_windows)
 }
 
-sqrt_mean <- function(x) sqrt(mean(x))
+# sqrt_mean <- function(x) sqrt(mean(x))
 
 rmse <- function(x) sqrt(mean(x^2))
+
+squared_distance <- function(lat_dif, long_dif) {
+    return(sqrt(lat_dif^2 + long_dif^2))
+}
+
+gaussian_kernel <- function(x, sigma) {
+    return(1/(sqrt(2 * pi) * sigma) * exp(-1 * x^2 / (2 * sigma^2)))
+}

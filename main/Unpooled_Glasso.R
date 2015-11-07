@@ -132,7 +132,7 @@ Train_Unpooled_Glasso <- function(DF, var_list, num_lambdas=50,
 
             # save lambda used for later aggregations
             lambda_df[lambda_df$window == window &
-                    lambda_df$locations == location,
+                    lambda_df$location_key == location,
                 (ncol(lambda_df)-num_lambdas+1):ncol(lambda_df)] <- model$lambdas
         }
 
@@ -321,15 +321,6 @@ compute_beta <- function(icov, cov_xy, x, y, standardize_input, ...) {
     return(rval)
 }
 
-
-squared_distance <- function(lat_dif, long_dif) {
-    return(sqrt(lat_dif^2 + long_dif^2))
-}
-
-gaussian_kernel <- function(x, sigma) {
-    return(1/(sqrt(2 * pi) * sigma) * exp(-1 * x^2 / (2 * sigma^2)))
-}
-
 compute_distance_matrix <- function(coordinates) {
     # in case there is noise in coordinates, find center of each location
     mean_locations <- coordinates %>% group_by(location_key) %>%
@@ -466,4 +457,107 @@ compute_rmses <- function(all_results, lambda_df) {
 
 
 
+
+
+plot_error_curve.Unpooled_Glasso <- function(object, ...) {
+    require(ggplot2)
+    require(grid)
+    require(gridExtra)
+    require(dplyr)
+    require(stringr)
+
+    if (class(object) != "Unpooled_Glasso")
+        stop("must provide object of type Unpooled_Glasso")
+
+    # unpack the Unpooled_Glasso object
+    rmse_agg <- object$rmse_agg
+
+    # find null performance
+    null_rmse <- unique(rmse_agg[rmse_agg$lambda_id == "lambda_null",c("Avg_RMSE", "StDev_RMSE")])
+    null_label <- paste0("Null RMSE: ", round(null_rmse$Avg_RMSE, 2), " (+/-", round(null_rmse$StDev_RMSE,2),")")
+
+    # extract avg rmse by lambda and label the best results
+    rmse_set <- rmse_agg[rmse_agg$lambda_id != "lambda_null",]
+    rmse_set$highlight <- factor(ifelse(rmse_set$lambda_id == paste0("lambda", object$best_lambda_id) &
+            rmse_set$cov_method == object$best_cov_method &
+            rmse_set$spatial_smoothing == object$best_spatial_smoothing,
+        "Optimal",
+        "Sub-Optimal"))
+
+    # plot
+    mycolours <- c("Optimal" = "red", "Sub-Optimal" = "grey50")
+    plot_title <- paste0("RMSE Averaged Over Sliding Windows and Locations\n",
+        "For Each Lambda and Method of Covariance Calculation")
+    p1 <- ggplot(rmse_set, aes(x=Lambda, y=Avg_RMSE)) +
+        geom_errorbar(aes(ymax = Avg_RMSE + StDev_RMSE, ymin=Avg_RMSE - StDev_RMSE, colour=highlight)) +
+        geom_point(aes(colour=highlight), size=2.5) +
+        geom_line() +
+        scale_color_manual("Status: ", values=mycolours) +
+        labs(x="Model Complexity",
+            y="RMSE",
+            title=plot_title) +
+        theme_bw() +
+        theme(legend.position="bottom", axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
+        facet_grid(cov_method~spatial_smoothing, scales="free_x")
+    rval <- list(p1=p1, null_label=null_label)
+    return(rval)
+}
+
+
+
+
+
+plot_error_distribution.Unpooled_Glasso <- function(object, ...)
+{
+    if (class(object) != "Unpooled_Glasso")
+        stop("must provide object of type Unpooled_Glasso")
+    rval <- ggplot(object$rmse_df, aes(x=rmse, colour=factor(window))) +
+        geom_density() +
+        labs(x="RMSE",
+            y="Density",
+            title="Distribution of Error By Sliding Windows") +
+        theme_bw() +
+        theme(legend.position="none") +
+        facet_grid(cov_method~spatial_smoothing)
+    return(rval)
+}
+
+
+plot_spatial_correlation.Unpooled_Glasso <- function(object, n_breaks=10, ...) {
+    if (class(object) != "Unpooled_Glasso")
+        stop("must provide object of type Unpooled_Glasso")
+    best_error_key <- paste0("error", object$best_lambda_id)
+    keep_vars <- c("location_key", "datetime_key", best_error_key)
+    all_results <- object$all_results[,keep_vars]
+    names(all_results) <- c(keep_vars[1:2], "error")
+
+    # calculate rms by place and time
+    temp <- all_results %>% group_by(location_key, datetime_key) %>%
+        summarise(RMSE = rmse(error))
+    # put the errors in wide format
+    wide_error <- dcast(temp, datetime_key~location_key, value.var="RMSE")
+    # if there wasn't a prediction made at a certain time for a location_key,
+    # then drop the the row from all other locations too
+    wide_error <- wide_error[complete.cases(wide_error), ]
+    wide_error$datetime_key <- NULL
+
+    error_cor <- cor(wide_error)
+    cor_df <- melt(error_cor)
+    cor_df$Location_X <- factor(cor_df$Var1)
+    cor_df$Location_Y <- factor(cor_df$Var2)
+    cor_df$Correlation <- as.character(cut(cor_df$value,
+        breaks=quantile(cor_df$value, probs=seq(0, 1 , length.out=n_breaks)),
+        right=FALSE))
+    cor_df$Correlation <- factor(ifelse(is.na(cor_df$Correlation), "1.0", cor_df$Correlation))
+
+    mypalette <- c(brewer.pal(length(levels(cor_df$Correlation)) - 1,"Blues"), "grey50")
+    rval <- ggplot(data = cor_df, aes(x=Location_X, y=Location_Y, fill=Correlation)) +
+        geom_tile(colour="white") +
+        theme_bw() +
+        scale_fill_manual("Correlation", values=mypalette) +
+        labs(title="Correlation of Errors: Validation Set",
+            x="Location",
+            y="Location")
+    return(rval)
+}
 
