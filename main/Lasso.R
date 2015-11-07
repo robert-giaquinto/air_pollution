@@ -20,7 +20,7 @@ Lasso <- function(DF, var_list, num_lambdas=50,
 
     # split up training and test locations
     location_splits <- split_locations(DF$location_key, 1)
-    num_locs <- length(location_splits);
+    num_locs <- length(location_splits)
 
     # Determine the number of sliding windows to capture results from
     dates <- ymd(DF$date_key)
@@ -165,6 +165,7 @@ Lasso <- function(DF, var_list, num_lambdas=50,
 plot_error_curve <- function(x, set) {
     UseMethod("plot_error_curve", x)
 }
+
 plot_error_curve.Lasso <- function(object, set, ...) {
     require(ggplot2)
     require(dplyr)
@@ -221,9 +222,9 @@ plot_error_distribution.Lasso <- function(object, split_by, ...) {
     all_hourly_df <- object$all_hourly_df
     num_lambdas <- object$num_lambdas
 
-    temp <- all_hourly_df[, c("location", "window", "set", paste0("error", 1:num_lambdas))]
-    temp[,paste0("error", 1:num_lambdas)] <- temp[,paste0("error", 1:num_lambdas)]^2
-    rmse <- temp %>% group_by(location, window, set) %>% summarise_each(funs(sqrt_mean))
+    rmse <- all_hourly_df[, c("location", "window", "set", paste0("error", 1:num_lambdas))] %>%
+        group_by(location, window, set) %>%
+        summarise_each(funs(rmse))
     # join the lambda value to each rmse
     rmse_long <- melt(rmse, id.vars=c("location", "window", "set"))
     rmse_long$lambda_id <- str_replace(rmse_long$variable, fixed("error"), "lambda")
@@ -249,8 +250,8 @@ plot_error_distribution.Lasso <- function(object, split_by, ...) {
 plot_spatial_correlation_Lasso <- function(best_errors, set) {
     # put the errors in wide format
     temp <- best_errors[best_errors$set == set, c("location", "datetime_key", "error")]
-    temp <- temp %>% group_by(location, datetime_key) %>% summarise(rmse = sqrt_mean(error^2))
-    wide_error <- dcast(temp, datetime_key~location, value.var="rmse")
+    temp <- temp %>% group_by(location, datetime_key) %>% summarise(RMSE = rmse(error))
+    wide_error <- dcast(temp, datetime_key~location, value.var="RMSE")
     # if there wasn't a prediction made at a certain time for a location
     # drop the the row from all other locations too
     wide_error <- wide_error[complete.cases(wide_error), ]

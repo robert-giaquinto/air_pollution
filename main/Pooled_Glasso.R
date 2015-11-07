@@ -3,7 +3,6 @@
 Pooled_Glasso <- function(DF, var_list, num_lambdas=50,
     testing_months=3, training_months=12, verbose=FALSE, cov_methods=c("pearson", "spearman"))
 {
-    require(glasso)
     # unpack variable list
     tar_var <- var_list$tar_var
     agg_vars <- var_list$agg_vars
@@ -66,10 +65,11 @@ Pooled_Glasso <- function(DF, var_list, num_lambdas=50,
         # train model on all combinations of interactions
         # TODO this should be wrapped in a cross validation method???
         # average the results over 5 CVs???
-        model <- train_glasso_rank(x=model_set[,1:num_features], y=model_set[,num_features+1],
+        model <- train_glasso(x=model_set[,1:num_features], y=model_set[,num_features+1],
             num_lambdas=num_lambdas,
             cov_methods=cov_methods,
-            rescale_betas=TRUE, standardize_input=TRUE)
+            rescale_betas=TRUE, standardize_input=TRUE,
+            verbose=verbose)
         # find the best value of lambda, save the model with this lambda (fit on the whole set)
         # save lambdas
         for (cm in 1:length(cov_methods)) {
@@ -148,9 +148,9 @@ Pooled_Glasso <- function(DF, var_list, num_lambdas=50,
 
 
 
-train_glasso_rank <- function(x, y, num_lambdas,
+train_glasso <- function(x, y, num_lambdas,
     cov_methods=c("pearson","spearman"),
-    rescale_betas=TRUE, standardize_input=TRUE, verbose=TRUE)
+    rescale_betas=TRUE, standardize_input=TRUE, verbose=FALSE)
 {
     require(huge)
     # center and scale the data
@@ -240,7 +240,9 @@ predict.train_glasso <- function(object, newx, ...) {
     return(yhat)
 }
 
-
+plot_error_curve <- function(x) {
+    UseMethod("plot_error_curve", x)
+}
 plot_error_curve.Pooled_Glasso <- function(object, ...) {
     require(ggplot2)
     require(grid)
@@ -288,7 +290,9 @@ plot_error_curve.Pooled_Glasso <- function(object, ...) {
 
 
 
-
+plot_error_distribution <- function(x) {
+    UseMethod("plot_error_distribution", x)
+}
 plot_error_distribution.Pooled_Glasso <- function(object, ...)
 {
     if (class(object) != "Pooled_Glasso")
@@ -304,7 +308,9 @@ plot_error_distribution.Pooled_Glasso <- function(object, ...)
     return(rval)
 }
 
-
+plot_spatial_correlation <- function(x) {
+    UseMethod("plot_spatial_correlation", x)
+}
 plot_spatial_correlation.Pooled_Glasso <- function(object, n_breaks=10, ...) {
     best_error_key <- paste0("error", object$best_lambda_id)
     keep_vars <- c("location_key", "datetime_key", best_error_key)

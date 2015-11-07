@@ -1,0 +1,242 @@
+%  SET UP LaTeX DEFAULTS  --------------------------------------
+\documentclass{article}
+\usepackage[sc]{mathpazo}
+\renewcommand{\sfdefault}{lmss}
+\renewcommand{\ttdefault}{lmtt}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{verbose,tmargin=2.5cm,bmargin=2.5cm,lmargin=2.5cm,rmargin=2.5cm}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{3}
+% \usepackage[options]{algorithm2e}
+\usepackage{url}
+\usepackage{setspace}
+\usepackage{relsize}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{amsmath}
+\usepackage{enumerate}
+\usepackage{booktabs}
+
+\usepackage[authoryear]{natbib}
+\usepackage[nottoc]{tocbibind}
+\usepackage[unicode=true,pdfusetitle,bookmarks=true,bookmarksnumbered=true,bookmarksopen=true,bookmarksopenlevel=2,breaklinks=false,pdfborder={0 0 0},backref=false,colorlinks,citecolor=black,filecolor=black,linkcolor=black,urlcolor=black]{hyperref}
+\hypersetup{
+    pdfstartview={XYZ null null 1}}
+%\usepackage{breakurl}
+\makeatletter
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% User specified LaTeX commands.
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\topfraction}{0.8}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\floatpagefraction}{0.75}
+\usepackage[buttonsize=1em]{animate}
+\makeatother
+\renewcommand{\bibname}{References}
+
+\begin{document}
+
+\title{Sparse Undirected Graphs for Spatiotemporal Modeling: Summary of Pooled GLASSO Performance}
+\author{Robert A. Giaquinto}
+\maketitle
+
+\begin{abstract}
+   Abstract goes here!
+\end{abstract}
+
+\tableofcontents
+
+%  Base KnitR code ------------------------------------------------------------------
+<<setup, include=FALSE, cache=FALSE>>=
+library(knitr)
+
+opts_chunk$set(fig.align='center',
+    fig.show='hold',
+    fig.pos='H',
+    message=FALSE,
+    warning=FALSE,
+    echo=FALSE,
+    par=TRUE)
+options(width=80, stringsAsFactors=FALSE)
+
+library(ggplot2)
+library(scales)
+library(reshape2)
+library(dplyr)
+library(xtable)
+library(stringr)
+library(readr)
+library(huge)
+library(lubridate)
+library(RColorBrewer)
+library(ggmap)
+library(geoR)
+
+
+source_dir <- '/Users/robert/documents/umn/air_pollution/src/main/'
+source(paste0(source_dir, 'Utility_Functions.R'))
+source(paste0(source_dir, 'Pooled_Glasso.R'))
+@
+
+
+\section{Overview}
+This is what I found
+
+
+
+% IMPORT DATA
+<<data, results='hide'>>=
+
+data_dir <- '/Users/robert/documents/umn/air_pollution/data/'
+
+# read in a few rows of data to determine column types
+temp <- read.csv(file=paste0(data_dir, "houston_features.csv"), nrow=1000)
+
+# if column types are logical (from poor guessing of type) change to double
+col_types <- sapply(temp, class)
+col_types <- ifelse(col_types %in% c('logical', 'numeric'), 'd', str_sub(col_types,1,1))
+col_types <- paste(col_types, collapse='')
+
+DF <- read_csv(file=paste0(data_dir, "houston_features.csv"),
+    progress=FALSE,
+    col_types=col_types)
+# remove temporary items
+rm(temp, col_types)
+
+# to speed up exploration, only use data from 2010 forward
+full_locations <- c(167001034L, 201000024L, 201001034L,
+    201001035L, 201001039L, 201001042L, 201001050L, 245000022L, 245001050L)
+DF <- as.data.frame(DF[DF$date_key >= 20100000 & DF$location_key %in% full_locations,])
+DF$County_Code <- NULL
+DF$State_Code <- NULL
+
+# Create a few custom variables
+DF$am_rushhour <- ifelse(DF$Time_Local %in% c(6,7,8), 1, 0)
+DF$pm_rushhour <- ifelse(DF$Time_Local %in% c(18,19,20,21), 1, 0)
+DF$rushhour <- ifelse(DF$am_rushhour > 0 | DF$pm_rushhour > 0, 1, 0)
+@
+
+<<var_names>>=
+# define variables to refer to groups of variables
+tar_var <- 'pm25'
+
+key_vars <- c("date_key", "datetime_key", "location_key"
+#     , "Date_Local"
+    , "Latitude"
+    , "Longitude"
+#     , "Site_Num"
+    , "Time_Local"
+)
+
+date_vars <- c("day_of_week_cycle",
+    "day_of_week_0", "day_of_week_1", "day_of_week_2",
+    "day_of_week_3", "day_of_week_4", "day_of_week_5", "day_of_week_6",
+    "day_of_year_cycle", "week_of_year_cycle",
+    "month_cycle", "month_1",
+    "month_2", "month_3", "month_4", "month_5", "month_6", "month_7",
+    "month_8", "month_9", "month_10", "month_11", "month_12",
+    "day_of_month_cycle",
+    "quarter_cycle", "quarter_1", "quarter_2", "quarter_3", "quarter_4",
+    "time_cycle",
+    "am_rushhour", "pm_rushhour", "rushhour"
+)
+
+lag_root_names <- c("pm25_lag", "wind_direction_sin_lag", "wind_direction_cos_lag",
+    # "wind_direction_NE_lag", "wind_direction_SE_lag",
+    # "wind_direction_NW_lag", "wind_direction_SW_lag",
+    "wind_knots_lag", "temperature_lag",
+    "pct_humidity_lag", "dewpoint_lag",
+    "ozone_lag", "so2_lag", "co_lag", "no2_lag")
+
+lag_vars <- c(paste0(lag_root_names, "1")
+#     , paste0(lag_root_names, "2")
+#     , paste0(lag_root_names, "3")
+)
+
+agg_vars <- c(paste0(lag_root_names, "1", "_agg1")
+#     , paste0(lag_root_names, "2", "_agg1")
+#     , paste0(lag_root_names, "3", "_agg1")
+)
+
+# keep only the variables used above for modeling
+DF <- DF[,c(key_vars, tar_var, date_vars, lag_vars, agg_vars)]
+
+# impute remainder of missings
+for (n in names(DF)) {
+    if (n %in% c(lag_vars, agg_vars)) {
+        DF[is.na(DF[,n]), n] <- mean(DF[,n], na.rm=TRUE)
+    }
+}
+@
+
+
+
+
+\section{Introduction}
+
+<<training_parameters>>=
+testing_months=6
+training_months=12
+verbose=FALSE
+num_lambdas <- 25
+var_list <- list(tar_var=tar_var, date_vars=date_vars, agg_vars=agg_vars, lag_vars=lag_vars)
+cov_methods = c("pearson", "spearman")
+@
+
+<<glasso>>=
+glasso_results <- Pooled_Glasso(DF, var_list,
+    num_lambdas=num_lambdas,
+    testing_months=testing_months,
+    training_months=training_months,
+    verbose=verbose,
+    cov_methods=cov_methods)
+
+@
+
+
+
+
+\section{Error as a Function of Model Complexity}
+
+What do the model errors look like for known locations and future dates?
+<<calculate_glasso_error>>=
+error_curve <- plot_error_curve(glasso_results)
+@
+<<show_glasso_error, fig.cap=error_curve$null_label>>=
+print(error_curve$p1)
+@
+
+
+
+
+\section{Distribution of Error Across Time and Space}
+
+Plot distribution of error by sliding window time periods.
+<<gl_win_loc_plots, out.width='.49\\textwidth'>>=
+plot_error_distribution(glasso_results)
+@
+
+
+\section{Spatial Correlation}
+
+Are the errors correlated?
+<<gl_error_correlation, out.width='.49\\textwidth'>>=
+p1 <- plot_spatial_correlation.Graphical_Lasso(glasso_results)
+map_df <- unique(DF[,c("Latitude", "Longitude", "location_key")])
+map_df$location_key <- factor(map_df$location_key)
+names(map_df) <- c("lat", "lon", "location")
+map <- get_map(location = c(lon=mean(map_df$lon), lat=mean(map_df$lat)),
+    zoom=9, maptype="toner-lite", color="bw", messaging=FALSE)
+p2 <- ggmap(map) +
+    geom_point(data=map_df,
+        aes(x=lon, y=lat, colour=location), size=4) +
+    labs(x="Longitude", y="Latitude")
+
+print(p1)
+print(p2)
+
+@
+
+
+
+\end{document}

@@ -458,7 +458,9 @@ compute_rmses <- function(all_results, lambda_df) {
 
 
 
-
+plot_error_curve <- function(x) {
+    UseMethod("plot_error_curve", x)
+}
 plot_error_curve.Unpooled_Glasso <- function(object, ...) {
     require(ggplot2)
     require(grid)
@@ -506,7 +508,9 @@ plot_error_curve.Unpooled_Glasso <- function(object, ...) {
 
 
 
-
+plot_error_distribution <- function(x) {
+    UseMethod("plot_error_distribution", x)
+}
 plot_error_distribution.Unpooled_Glasso <- function(object, ...)
 {
     if (class(object) != "Unpooled_Glasso")
@@ -522,7 +526,9 @@ plot_error_distribution.Unpooled_Glasso <- function(object, ...)
     return(rval)
 }
 
-
+plot_spatial_correlation <- function(x) {
+    UseMethod("plot_spatial_correlation", x)
+}
 plot_spatial_correlation.Unpooled_Glasso <- function(object, n_breaks=10, ...) {
     if (class(object) != "Unpooled_Glasso")
         stop("must provide object of type Unpooled_Glasso")
