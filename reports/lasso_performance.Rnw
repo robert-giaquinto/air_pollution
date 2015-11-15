@@ -76,118 +76,17 @@ library(geoR)
 source_dir <- '/Users/robert/documents/umn/air_pollution/src/main/'
 source(paste0(source_dir, 'Utility_Functions.R'))
 source(paste0(source_dir, 'Lasso.R'))
+source(paste0(source_dir, 'Data_Prep.R'))
 @
-
-
-\section{Overview}
-This is what I found
-
-
-
-% IMPORT DATA
-<<data, results='hide'>>=
-
-data_dir <- '/Users/robert/documents/umn/air_pollution/data/'
-
-# read in a few rows of data to determine column types
-temp <- read.csv(file=paste0(data_dir, "houston_features.csv"), nrow=1000)
-
-# if column types are logical (from poor guessing of type) change to double
-col_types <- sapply(temp, class)
-col_types <- ifelse(col_types %in% c('logical', 'numeric'), 'd', str_sub(col_types,1,1))
-col_types <- paste(col_types, collapse='')
-
-DF <- read_csv(file=paste0(data_dir, "houston_features.csv"),
-    progress=FALSE,
-    col_types=col_types)
-# remove temporary items
-rm(temp, col_types)
-
-# to speed up exploration, only use data from 2010 forward
-full_locations <- c(167001034L, 201000024L, 201001034L,
-    201001035L, 201001039L, 201001042L, 201001050L, 245000022L, 245001050L)
-DF <- as.data.frame(DF[DF$date_key >= 20100000 & DF$location_key %in% full_locations,])
-DF$County_Code <- NULL
-DF$State_Code <- NULL
-
-# Create a few custom variables
-DF$am_rushhour <- ifelse(DF$Time_Local %in% c(6,7,8), 1, 0)
-DF$pm_rushhour <- ifelse(DF$Time_Local %in% c(18,19,20,21), 1, 0)
-DF$rushhour <- ifelse(DF$am_rushhour > 0 | DF$pm_rushhour > 0, 1, 0)
-@
-
-<<var_names>>=
-# define variables to refer to groups of variables
-tar_var <- 'pm25'
-
-key_vars <- c("date_key", "datetime_key", "location_key"
-#     , "Date_Local"
-    , "Latitude"
-    , "Longitude"
-#     , "Site_Num"
-    , "Time_Local"
-)
-
-date_vars <- c("day_of_week_cycle",
-    "day_of_week_0", "day_of_week_1", "day_of_week_2",
-    "day_of_week_3", "day_of_week_4", "day_of_week_5", "day_of_week_6",
-    "day_of_year_cycle", "week_of_year_cycle",
-    "month_cycle", "month_1",
-    "month_2", "month_3", "month_4", "month_5", "month_6", "month_7",
-    "month_8", "month_9", "month_10", "month_11", "month_12",
-    "day_of_month_cycle",
-    "quarter_cycle", "quarter_1", "quarter_2", "quarter_3", "quarter_4",
-    "time_cycle",
-    "am_rushhour", "pm_rushhour", "rushhour"
-)
-
-lag_root_names <- c("pm25_lag", "wind_direction_sin_lag", "wind_direction_cos_lag",
-    # "wind_direction_NE_lag", "wind_direction_SE_lag",
-    # "wind_direction_NW_lag", "wind_direction_SW_lag",
-    "wind_knots_lag", "temperature_lag",
-    "pct_humidity_lag", "dewpoint_lag",
-    "ozone_lag", "so2_lag", "co_lag", "no2_lag")
-
-lag_vars <- c(paste0(lag_root_names, "1")
-#     , paste0(lag_root_names, "2")
-#     , paste0(lag_root_names, "3")
-)
-
-agg_vars <- c(paste0(lag_root_names, "1", "_agg1")
-#     , paste0(lag_root_names, "2", "_agg1")
-#     , paste0(lag_root_names, "3", "_agg1")
-)
-
-# keep only the variables used above for modeling
-DF <- DF[,c(key_vars, tar_var, date_vars, lag_vars, agg_vars)]
-
-# impute remainder of missings
-for (n in names(DF)) {
-    if (n %in% c(lag_vars, agg_vars)) {
-        DF[is.na(DF[,n]), n] <- mean(DF[,n], na.rm=TRUE)
-    }
-}
-@
-
-
-
-
-\section{Introduction}
 
 <<training_parameters>>=
 testing_months=6
-training_months=12
+training_months=24
 verbose=FALSE
 num_lambdas <- 25
 var_list <- list(tar_var=tar_var, date_vars=date_vars, agg_vars=agg_vars, lag_vars=lag_vars)
-cov_methods = c("pearson", "spearman")
 @
 
-
-
-
-
-\section{Error as a Function of Model Complexity}
 <<lasso>>=
 lasso_results <- Lasso(DF, var_list,
     num_lambdas=num_lambdas,
@@ -196,50 +95,51 @@ lasso_results <- Lasso(DF, var_list,
 
 @
 
-What do the model errors look like for known locations and future dates?
+\section{Introduction}
+As a baseline model for comparison, the air pollution (as measured by particulate matter less than 2.5 micrometers, denoted PM25) is modeled using regularized linear regression via the LASSO. The LASSO offers a feature select method since non-informative coefficients are driven towards zero, allowing many interactions of features to be tested. In particular, interactions between temporal, and lagged (or lagged moving average) features are considered. The LASSO assumes PM25 follows a guassian distribution.
+
+The LASSO is trained on \Sexpr{training_months} months of data, with predictions and errors records on the following \Sexpr{testing_months} months of data. Then the training and testing dates are shifted forward in time \Sexpr{testing_months} months and the model is re-trained and re-tested. Results are saved for all values of lambdas across all windows -- instead of a traditional cross-validation approach which may find the best lambda (via CV) on a single training window and then move on. The advantages of this approach are that errors can be aggregated across moving windows in order to find a value of lambda which is most suitable for any point in time.
+
+
+\section{Error as a Function of Model Complexity}
+The primary means of evaluation of the LASSO is the root mean squared error (RMSE) calculated over all prediction windows by each lambda value. The lambda value is the parameter which governs model complexity in the LASSO. As shown in (EQUATION FOR LASSO), model complexity is measured by the absolute value of the coefficients. The plot below shows how RMSE varys by lambda. Larger values of lambda equate to larger penalties for complexity. As lambda increases the model approaches the null model in which predictions are simply the average PM25 seen in the training set. At the other extreme, when lambda is zero, the model is equivalent to linear regression. The plot below shows that a $lambda=$\Sexpr{round(lasso_results$best_lambda, 3)} results in the best predicted error on the test set of future data. Moreover, the model performs well, showing a drop in RMSE over the null model by \Sexpr{round(100*(1 - lasso_results$best_rmse/6.33)}\%
 <<known_error>>=
-p1 <- plot_error_curve(lasso_results, "future")
+p1 <- plot_error_curve(lasso_results)
 print(p1)
 @
 
-
-What do the model errors look like for known locations and future dates?
-<<unknown_error>>=
-p1 <- plot_error_curve(lasso_results, "unknown")
-print(p1)
-@
 
 
 
 
 \section{Distribution of Error Across Time and Space}
-Plot distribution of error across locations, and plot error distributions varied by window time periods.
+In addition to looking at the overall performance, it's helpful to examine how RMSE varies by time conditional on location, and location conditioned on time. In the case of time conditioned on location, this plot helps
 <<win_loc_plots, out.width='.49\\textwidth'>>=
-plot_error_distribution(lasso_results, split_by="location")
-plot_error_distribution(lasso_results, split_by="window")
+plot_error_distribution(lasso_results)
 @
+TODO re-add distribution in error across space
 
 
-
-Print out error for each location of unknown test set.
-<<lasso_location_error_table, results='asis'>>=
-key_vars <- c("location", "datetime_key", "window", "set", "actual")
+On a higher level, the RMSE for each particular is shown below:
+<<lasso_window_error_table, results='asis'>>=
+key_vars <- c("location_key", "datetime_key", "window", "actual")
 keep_vars <- c(key_vars, paste0(c("predict", "error"),
     which(lasso_results$best_lambda == lambda_sequence(num_lambdas)))) # index of best lambda
 best_errors <- as.data.frame(lasso_results$all_hourly_df[,keep_vars])
 names(best_errors) <- c(key_vars, "predict", "error")
 
-# what is the predicted error at each location (for optimal lambda)
-loc_error <- best_errors[best_errors$set == "unknown",] %>% group_by(location) %>%
+# what is the predicted error at each window (for optimal lambda)
+window_error <- best_errors %>% group_by(window) %>%
     summarise(avg_actual = mean(actual), avg_predict = mean(predict), RMSE=rmse(error))
-loc_error <- loc_error[order(loc_error$RMSE, decreasing=FALSE),]
-print(xtable(loc_error, digits=4), include.rownames=FALSE)
-rm(loc_error)
+window_error <- window_error[order(window_error$RMSE, decreasing=FALSE),]
+print(xtable(window_error, digits=4), include.rownames=FALSE)
+rm(window_error)
 @
 
-<<lasso_window_error_table, results='asis'>>=
-# what is the predicted error at each location (for optimal lambda)
-window_error <- best_errors[best_errors$set == "unknown",] %>% group_by(window) %>%
+And similarly for locations:
+<<lasso_location_error_table, results='asis'>>=
+# what is the predicted error at each window (for optimal lambda)
+window_error <- best_errors %>% group_by(window) %>%
     summarise(avg_actual = mean(actual), avg_predict = mean(predict), RMSE=rmse(error))
 window_error <- window_error[order(window_error$RMSE, decreasing=FALSE),]
 print(xtable(window_error, digits=4), include.rownames=FALSE)
@@ -251,7 +151,7 @@ rm(window_error)
 \section{Spatial Correlation}
 Are the errors correlated?
 <<error_correlation, out.width='.49\\textwidth'>>=
-p1 <- plot_spatial_correlation_Lasso(best_errors, "unknown")
+p1 <- plot_spatial_correlation(lasso_results)
 map_df <- unique(DF[,c("Latitude", "Longitude", "location_key")])
 map_df$location_key <- factor(map_df$location_key)
 names(map_df) <- c("lat", "lon", "location")
@@ -266,16 +166,6 @@ print(p1)
 print(p2)
 
 @
-
-
-How about for the training locations?
-<<future_error_correlation, out.width='.49\\textwidth'>>=
-p1 <- plot_spatial_correlation_Lasso(best_errors, "future")
-print(p1)
-print(p2)
-@
-Correlation structure looks about the same.
-
 
 
 
@@ -311,24 +201,6 @@ points(krig_df)
 @
 
 
-
-\section{Temporal Correlation}
-Are the errors correlated with time?
-<<time_errors>>=
-# aggregate results by day
-best_errors$datetime <- parse_date_time(best_errors$datetime_key, "%y%m%d%H")
-hour(best_errors$datetime) <- 0
-agg_df <- best_errors[best_errors$set == "unknown",] %>% group_by(datetime) %>%
-    summarise(RMSE = rmse(error))
-ggplot(agg_df, aes(x=datetime, y=RMSE)) +
-    geom_point(colour="grey") +
-    geom_line(colour="grey") +
-    geom_smooth(se=FALSE, colour="black") +
-    stat_smooth(method = "lm") +
-    theme_bw()
-
-
-@
 
 
 

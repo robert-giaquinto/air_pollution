@@ -44,7 +44,6 @@ Train_Unpooled_Glasso <- function(DF, var_list, num_lambdas=50,
     verbose=FALSE)
 {
     # evaluate the unpooled glasso for one set of parameters
-    require(glasso)
     # unpack variable list
     tar_var <- var_list$tar_var
     agg_vars <- var_list$agg_vars

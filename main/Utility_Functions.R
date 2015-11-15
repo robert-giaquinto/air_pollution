@@ -6,6 +6,10 @@ split_locations <- function(location_key, num_test_locs=1, repeated=TRUE) {
     # num_test_locs: number of locations to be kept in test set (default=1)
     # return: a list of length equal to number of unique locations. Each
     #         element of the list contains indices of the training rows.
+    # example:
+    #location_splits <- split_locations(DF$location_key, 1)
+    #num_locs <- length(location_splits)
+
     uniq_locs <- unique(location_key)
     num_locs <- length(uniq_locs)
     in_train = vector("list", num_locs)
