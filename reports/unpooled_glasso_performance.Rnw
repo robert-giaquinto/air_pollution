@@ -82,14 +82,14 @@ source(paste0(source_dir, 'Data_Prep.R'))
 <<training_parameters>>=
 testing_months=6
 training_months=24
-verbose=TRUE
+verbose=FALSE
 num_lambdas <- 25
 var_list <- list(tar_var=tar_var, date_vars=date_vars, agg_vars=agg_vars, lag_vars=lag_vars)
 cov_methods <- c("pearson", "spearman")
 spatial_smoothing <- c("none", "distance", "kernel")
 @
 
-<<glasso>>=
+<<glasso, cache=TRUE>>=
 unpooled_results <- Unpooled_Glasso(DF,
     var_list,
     num_lambdas=num_lambdas,
@@ -112,14 +112,25 @@ What do the model errors look like for known locations and future dates?
 <<unpooled_glasso_error>>=
 error_curve <- plot_error_curve(unpooled_results)
 @
-<<show_unpooled_glasso_error, fig.cap=error_curve$null_label>>=
+<<show_unpooled_glasso_error, fig.cap=error_curve$plot_caption>>=
 print(error_curve$p1)
 @
 
 \section{Distribution of Error Across Time and Space}
 Plot distribution of error by sliding window time periods.
-<<unpooled_win_loc_plots, out.width='.49\\textwidth'>>=
-plot_error_distribution(unpooled_results)
+<<unpooled_window>>=
+error_distribution <- plot_error_distribution(unpooled_results, conditional="window")
+@
+<<unpooled_window_plots, fig.cap=error_distribution$plot_caption>>=
+print(error_distribution$out_plot)
+@
+
+Plot distribution of error by sliding window time periods.
+<<unpooled_location>>=
+error_distribution <- plot_error_distribution(unpooled_results, conditional="location_key")
+@
+<<unpooled_location_plots, fig.cap=error_distribution$plot_caption>>=
+print(error_distribution$out_plot)
 @
 
 \section{Spatial Correlation}
@@ -143,37 +154,6 @@ print(p2)
 
 
 
-
-\section{Spatial Interpolation}
-Use krigging to interpolate locations
-<<lasso_krig>>=
-lat_long_df <- DF %>% group_by(location_key) %>% summarise(lat=mean(Latitude), lon=mean(Longitude))
-aday <- best_errors[best_errors$set == "future" &
-        best_errors$datetime_key >= 2013010200 &
-        best_errors$datetime_key < 2013010300,]
-krig_df <- left_join(x=aday, y=lat_long_df, by=c("location"="location_key"))
-krig_df <- krig_df[,c("lat","lon","predict")]
-
-# a <- read.table("http://www.stat.ucla.edu/~nchristo/statistics_c173_c273/kriging_11.txt", header=TRUE)
-b <- as.geodata(krig_df)
-b <- jitterDupCoords(x=b, max=.05)
-prediction <- ksline(b, cov.model="exp",
-    cov.pars=c(10,3.33), nugget=0,
-    locations=c(29.90104,-95.32613))
-
-n <- 25
-x <- seq(min(krig_df$lat), max(krig_df$lat), length.out=n)
-y <- seq(min(krig_df$lon), max(krig_df$lon), length.out=n)
-xv <- rep(x, n)
-yv <- rep(y, each=n)
-in_mat <- as.matrix(cbind(xv,yv))
-q <- ksline(b, cov.model="gaussian",cov.pars=c(2,.1), locations=in_mat)
-cbind(q$predict[1:5], q$krige.var[1:5])
-image(q, val=q$predict)
-points(krig_df)
-
-
-@
 
 
 

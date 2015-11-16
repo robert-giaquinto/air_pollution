@@ -475,7 +475,8 @@ plot_error_curve.Unpooled_Glasso <- function(object, ...) {
 
     # find null performance
     null_rmse <- unique(rmse_agg[rmse_agg$lambda_id == "lambda_null",c("Avg_RMSE", "StDev_RMSE")])
-    null_label <- paste0("Null RMSE: ", round(null_rmse$Avg_RMSE, 2), " (+/-", round(null_rmse$StDev_RMSE,2),")")
+    plot_caption <- paste0("Null RMSE: ", round(null_rmse$Avg_RMSE, 2), " (+/-", round(null_rmse$StDev_RMSE,2),"). ",
+        "Error bars represent variability in RMSE across locations and prediction windows.")
 
     # extract avg rmse by lambda and label the best results
     rmse_set <- rmse_agg[rmse_agg$lambda_id != "lambda_null",]
@@ -487,43 +488,59 @@ plot_error_curve.Unpooled_Glasso <- function(object, ...) {
 
     # plot
     mycolours <- c("Optimal" = "red", "Sub-Optimal" = "grey50")
-    plot_title <- paste0("RMSE Averaged Over Sliding Windows and Locations\n",
-        "For Each Lambda and Method of Covariance Calculation")
     p1 <- ggplot(rmse_set, aes(x=Lambda, y=Avg_RMSE)) +
-        geom_errorbar(aes(ymax = Avg_RMSE + StDev_RMSE, ymin=Avg_RMSE - StDev_RMSE, colour=highlight)) +
+        geom_errorbar(aes(ymax=Avg_RMSE+StDev_RMSE, ymin=Avg_RMSE-StDev_RMSE,
+            colour=highlight), width=.1) +
         geom_point(aes(colour=highlight), size=2.5) +
         geom_line() +
-        scale_color_manual("Status: ", values=mycolours) +
+        facet_grid(spatial_smoothing~cov_method, scales="free_x") +
+        theme_bw() +
+        scale_color_manual("Overall Performance: ", values=mycolours) +
+        scale_x_log10() +
         labs(x="Model Complexity",
             y="RMSE",
-            title=plot_title) +
-        theme_bw() +
-        theme(legend.position="bottom", axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
-        facet_grid(cov_method~spatial_smoothing, scales="free_x")
-    rval <- list(p1=p1, null_label=null_label)
+            title="RMSE Across All Hyperparameters:\nCovariance Method (Columns) and Weighting of Covariances (Rows)") +
+        theme(legend.position="bottom", axis.ticks.x = element_blank(), axis.text.x = element_blank())
+    rval <- list(p1=p1, plot_caption=plot_caption)
     return(rval)
 }
 
 
 
 
-plot_error_distribution <- function(x) {
+plot_error_distribution <- function(x, conditional) {
     UseMethod("plot_error_distribution", x)
 }
-plot_error_distribution.Unpooled_Glasso <- function(object, ...)
+plot_error_distribution.Unpooled_Glasso <- function(object, conditional, ...)
 {
     if (class(object) != "Unpooled_Glasso")
         stop("must provide object of type Unpooled_Glasso")
-    rval <- ggplot(object$rmse_df, aes(x=rmse, colour=factor(window))) +
+    if (!(conditional %in% c("window", "location_key")))
+        stop("conditional parameter must be either window or location_key")
+    plot_df <- object$rmse_df
+    plot_df[,conditional] <- factor(plot_df[,conditional])
+    out_plot <- ggplot(plot_df, aes_string(x="rmse", colour=conditional)) +
         geom_density() +
         labs(x="RMSE",
             y="Density",
             title="Distribution of Error By Sliding Windows") +
         theme_bw() +
         theme(legend.position="none") +
-        facet_grid(cov_method~spatial_smoothing)
+        facet_grid(spatial_smoothing~cov_method, scales="free_y")
+    plot_caption <- paste0("Color of lines represents distribution of RMSE for each prediction ",
+        str_replace_all(conditional, fixed("_"), "\\_"),
+        ". Variability comes from different RMSE's in each ",
+        ifelse(conditional == "window", "location", "window"),
+        ". Note, optimal combination of parameters requires calculating covariance using ",
+        object$best_cov_method, "'s method, and ",
+        ifelse(object$best_spatial_smoothing == "none",
+            "not combining covariances",
+            paste0("combing covariances from each location based on a ",
+                object$best_spatial_smoothing, " weighting.")))
+    rval <- list(out_plot=out_plot, plot_caption=plot_caption)
     return(rval)
 }
+
 
 plot_spatial_correlation <- function(x) {
     UseMethod("plot_spatial_correlation", x)

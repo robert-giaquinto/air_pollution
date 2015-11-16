@@ -32,8 +32,7 @@ Lasso <- function(DF, var_list, num_lambdas=50,
     }
 
     # initialize containers to store results
-    all_rmse <- vector("list", num_locs)
-    all_results <- vector("list", num_locs)
+    all_results <- vector("list", num_windows)
     train_start <- min_date
     for (window in 1:num_windows) {
         if (verbose) {
@@ -67,7 +66,8 @@ Lasso <- function(DF, var_list, num_lambdas=50,
         future_error <- future_set[,tar_var] - future_predict
         future_error_null <- future_set[,tar_var] - null_model
         future_results <- cbind(future_keys,
-            data.frame(window=rep(window, nrow(future_predict)), actual=rep(future_set[,tar_var], nrow(future_predict))),
+            data.frame(window=rep(window, nrow(future_predict)),
+                actual=future_set[,tar_var]),
             future_predict,
             null_model,
             future_error,
@@ -82,10 +82,23 @@ Lasso <- function(DF, var_list, num_lambdas=50,
         # increment the start date
         train_start <- train_start %m+% months(testing_months)
     }
-
-    # hourly level data:
+    # combine all windows
     all_hourly_df  <- bind_rows(all_results)
     rm(all_results)
+
+    # summarize RMSE based on locations and prediction windows
+    error_names <- c(paste0("error", 1:num_lambdas), "error_null")
+    rmses <- all_hourly_df[,c("location_key", "window", error_names)] %>%
+        group_by(location_key, window) %>%
+        summarise_each(funs(rmse))
+    # join the lambda value to each rmse
+    rmse_long <- melt(rmses, id.vars=c("location_key", "window"))
+    names(rmse_long) <- c("location_key", "window", "error_id", "rmse")
+    rmse_long$lambda_id <- str_replace(rmse_long$error_id, fixed("error"), "lambda")
+    lambda_df <- data.frame(lambda_id=paste0("lambda", 1:num_lambdas),
+        lambda_val=lambda_sequence(num_lambdas))
+    window_rmse <- left_join(x=rmse_long, y=lambda_df, by="lambda_id")
+    window_rmse$error_id <- NULL
 
     # find overall rmse aggregated by lambdas
     temp <- all_hourly_df[,error_names]
@@ -100,7 +113,8 @@ Lasso <- function(DF, var_list, num_lambdas=50,
     rmse_df$error_id <- NULL
 
     # use rmse to find best lambda
-    best_rmse = min(rmse_df$rmse)
+    null_rmse <-  rmse_df[rmse_df$lambda_id == "lambda_null", "rmse"]
+    best_rmse <- min(rmse_df$rmse)
     best_lambda <- rmse_df[rmse_df$rmse == best_rmse &
             rmse_df$lambda_id != "lambda_null", "lambda_val"]
     rval <- list(rmse_df=rmse_df,
@@ -108,6 +122,7 @@ Lasso <- function(DF, var_list, num_lambdas=50,
         all_hourly_df=all_hourly_df,
         best_lambda=best_lambda,
         best_rmse=best_rmse,
+        null_rmse=null_rmse,
         num_lambdas=num_lambdas)
     class(rval) <- "Lasso"
     return(rval)
@@ -144,7 +159,7 @@ plot_error_curve.Lasso <- function(object, ...) {
             label=null_label) +
         geom_point(aes(colour=highlight), size=2.5) +
         geom_line() +
-        scale_color_manual("Status: ", values=mycolours) +
+        scale_color_manual("Overall Performance: ", values=mycolours) +
         scale_x_log10(breaks=c(0.001, .01, .1, 1)) +
         coord_trans(y = "log10") +
         labs(x="Lambda",
@@ -156,35 +171,27 @@ plot_error_curve.Lasso <- function(object, ...) {
 }
 
 
-plot_error_distribution <- function(x, split_by) {
+plot_error_distribution <- function(x, conditional) {
     UseMethod("plot_error_distribution", x)
 }
-plot_error_distribution.Lasso <- function(object, ...) {
+plot_error_distribution.Lasso <- function(object, conditional, ...) {
     if (class(object) != "Lasso")
         stop("must provide object of type Lasso")
-    # unpack the Lasso object
-    all_hourly_df <- object$all_hourly_df
-    num_lambdas <- object$num_lambdas
-    # aggregate all results to calculate rmse by window
-    rmse <- all_hourly_df[, c("window", paste0("error", 1:num_lambdas))] %>%
-        group_by(window) %>%
-        summarise_each(funs(rmse))
-    # join the lambda value to each rmse
-    rmse_long <- melt(rmse, id.vars="window")
-    rmse_long$lambda_id <- str_replace(rmse_long$variable, fixed("error"), "lambda")
-    lambda_df <- data.frame(lambda_id=paste0("lambda", 1:num_lambdas),
-        lambda_val=lambda_sequence(num_lambdas))
-    rmse_df <- left_join(x=rmse_long, y=lambda_df, by="lambda_id")
-    # only plot results from best performing model
-    best_errors <- rmse_df[rmse_df$lambda_val == object$best_lambda,]
-    rval <- ggplot(best_errors, aes(x=value, colour=window)) +
+    plot_df <- object$window_rmse
+    plot_df[,conditional] <- factor(plot_df[,conditional])
+    plot_title <- paste0("Distribution of Error By ", conditional)
+    out_plot <- ggplot(plot_df, aes_string(x="rmse", colour=conditional)) +
         geom_density() +
         labs(x="RMSE",
             y="Density",
-            title="Distribution of Error Across Windows") +
+            title=plot_title) +
         theme_bw() +
-        theme(legend.position="none") +
-        facet_wrap(~set, scales="free_y", nrow=2)
+        theme(legend.position="none")
+    plot_caption <- paste0("Color of lines represents distribution of RMSE for each prediction ",
+        str_replace_all(conditional, fixed("_"), "\\_"),
+        ". Variability comes from different RMSE's in each ",
+        ifelse(conditional == "window", "location", "window"), ".")
+    rval <- list(out_plot=out_plot, plot_caption=plot_caption)
     return(rval)
 }
 
@@ -195,9 +202,10 @@ plot_spatial_correlation <- function(x, n_breaks) {
 }
 plot_spatial_correlation <- function(object, n_breaks=10, ...) {
     key_vars <- c("location_key", "datetime_key", "window", "actual")
-     <- which(object$best_lambda == lambda_sequence(num_lambdas))
+    best_lambda_index <- which(object$best_lambda == lambda_sequence(num_lambdas))
     keep_vars <- c(key_vars, paste0("error", best_lambda_index))
     best_errors <- as.data.frame(object$all_hourly_df[,keep_vars])
+    names(best_errors) <- c(key_vars, "error")
 
     # put the errors in wide format
     temp <- best_errors %>% group_by(location_key, datetime_key) %>% summarise(RMSE = rmse(error))

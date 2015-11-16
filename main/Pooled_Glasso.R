@@ -258,7 +258,8 @@ plot_error_curve.Pooled_Glasso <- function(object, ...) {
 
     # find null performance
     null_rmse <- unique(rmse_agg[rmse_agg$lambda_id == "lambda_null",c("Avg_RMSE", "StDev_RMSE")])
-    null_label <- paste0("Null RMSE: ", round(null_rmse$Avg_RMSE, 2), " (+/-", round(null_rmse$StDev_RMSE,2),")")
+    plot_caption <- paste0("Null RMSE: ", round(null_rmse$Avg_RMSE, 2), " (+/-", round(null_rmse$StDev_RMSE,2),"). ",
+        "Error bars represent variability in RMSE across locations and prediction windows.")
 
     # extract avg rmse by lambda and label the best results
     rmse_set <- rmse_agg[rmse_agg$lambda_id != "lambda_null",]
@@ -269,25 +270,22 @@ plot_error_curve.Pooled_Glasso <- function(object, ...) {
 
     # plot
     mycolours <- c("Optimal" = "red", "Sub-Optimal" = "grey50")
-    plot_title <- paste0("RMSE Averaged Over Sliding Windows and Locations\n",
-        "For Each Lambda and Method of Covariance Calculation")
-    cov_methods <- unique(rmse_set$cov_methods)
-    p1 <- ggplot(rmse_set, aes(x=Lambda, y=Avg_RMSE)) +
-        geom_errorbar(aes(ymax = Avg_RMSE + StDev_RMSE, ymin=Avg_RMSE - StDev_RMSE, colour=highlight)) +
+    out_plot <- ggplot(rmse_set, aes(x=Lambda, y=Avg_RMSE)) +
+        geom_errorbar(aes(ymax=Avg_RMSE+StDev_RMSE, ymin=Avg_RMSE-StDev_RMSE,
+            colour=highlight), width=.1) +
         geom_point(aes(colour=highlight), size=2.5) +
         geom_line() +
-        scale_color_manual("Status: ", values=mycolours) +
+        facet_wrap(~cov_methods, scales="free_x") +
+        theme_bw() +
+        scale_color_manual("Overall Performance: ", values=mycolours) +
+        scale_x_log10() +
         labs(x="Model Complexity",
             y="RMSE",
-            title=plot_title) +
-        theme_bw() +
-        theme(legend.position="bottom", axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
-        facet_wrap(~cov_methods, scales="free_x")
-    rval <- list(p1=p1, null_label=null_label)
+            title="RMSE by Lambda\nConditioned on Method of Covariance Calculation") +
+        theme(legend.position="bottom", axis.ticks.x = element_blank(), axis.text.x = element_blank())
+    rval <- list(out_plot=out_plot, plot_caption=plot_caption)
     return(rval)
 }
-
-
 
 
 plot_error_distribution <- function(x) {

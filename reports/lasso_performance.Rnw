@@ -102,7 +102,7 @@ The LASSO is trained on \Sexpr{training_months} months of data, with predictions
 
 
 \section{Error as a Function of Model Complexity}
-The primary means of evaluation of the LASSO is the root mean squared error (RMSE) calculated over all prediction windows by each lambda value. The lambda value is the parameter which governs model complexity in the LASSO. As shown in (EQUATION FOR LASSO), model complexity is measured by the absolute value of the coefficients. The plot below shows how RMSE varys by lambda. Larger values of lambda equate to larger penalties for complexity. As lambda increases the model approaches the null model in which predictions are simply the average PM25 seen in the training set. At the other extreme, when lambda is zero, the model is equivalent to linear regression. The plot below shows that a $lambda=$\Sexpr{round(lasso_results$best_lambda, 3)} results in the best predicted error on the test set of future data. Moreover, the model performs well, showing a drop in RMSE over the null model by \Sexpr{round(100*(1 - lasso_results$best_rmse/6.33)}\%
+The primary means of evaluation of the LASSO is the root mean squared error (RMSE) calculated over all prediction windows by each lambda value. The lambda value is the parameter which governs model complexity in the LASSO. As shown in (EQUATION FOR LASSO), model complexity is measured by the absolute value of the coefficients. The plot below shows how RMSE varys by lambda. Larger values of lambda equate to larger penalties for complexity. As lambda increases the model approaches the null model in which predictions are simply the average PM25 seen in the training set. At the other extreme, when lambda is zero, the model is equivalent to linear regression. The plot below shows that a $lambda=$\Sexpr{round(lasso_results$best_lambda, 3)} results in the best predicted error on the test set of future data. Moreover, the model performs well, showing a drop in RMSE over the null model by \Sexpr{round(100*(1 - lasso_results$best_rmse/lasso_results$null_rmse))}\%
 <<known_error>>=
 p1 <- plot_error_curve(lasso_results)
 print(p1)
@@ -114,11 +114,20 @@ print(p1)
 
 \section{Distribution of Error Across Time and Space}
 In addition to looking at the overall performance, it's helpful to examine how RMSE varies by time conditional on location, and location conditioned on time. In the case of time conditioned on location, this plot helps
-<<win_loc_plots, out.width='.49\\textwidth'>>=
-plot_error_distribution(lasso_results)
+<<unpooled_window>>=
+error_distribution <- plot_error_distribution(lasso_results, conditional="window")
 @
-TODO re-add distribution in error across space
+<<unpooled_window_plots, fig.cap=error_distribution$plot_caption>>=
+print(error_distribution$out_plot)
+@
 
+Plot distribution of error by sliding window time periods.
+<<unpooled_location>>=
+error_distribution <- plot_error_distribution(lasso_results, conditional="location_key")
+@
+<<unpooled_location_plots, fig.cap=error_distribution$plot_caption>>=
+print(error_distribution$out_plot)
+@
 
 On a higher level, the RMSE for each particular is shown below:
 <<lasso_window_error_table, results='asis'>>=
@@ -139,11 +148,11 @@ rm(window_error)
 And similarly for locations:
 <<lasso_location_error_table, results='asis'>>=
 # what is the predicted error at each window (for optimal lambda)
-window_error <- best_errors %>% group_by(window) %>%
+location_error <- best_errors %>% group_by(location_key) %>%
     summarise(avg_actual = mean(actual), avg_predict = mean(predict), RMSE=rmse(error))
-window_error <- window_error[order(window_error$RMSE, decreasing=FALSE),]
-print(xtable(window_error, digits=4), include.rownames=FALSE)
-rm(window_error)
+location_error <- location_error[order(location_error$RMSE, decreasing=FALSE),]
+print(xtable(location_error, digits=4), include.rownames=FALSE)
+rm(location_error)
 @
 
 
@@ -151,55 +160,21 @@ rm(window_error)
 \section{Spatial Correlation}
 Are the errors correlated?
 <<error_correlation, out.width='.49\\textwidth'>>=
-p1 <- plot_spatial_correlation(lasso_results)
+spatial_plot <- plot_spatial_correlation(lasso_results)
 map_df <- unique(DF[,c("Latitude", "Longitude", "location_key")])
 map_df$location_key <- factor(map_df$location_key)
 names(map_df) <- c("lat", "lon", "location")
 map <- get_map(location = c(lon=mean(map_df$lon), lat=mean(map_df$lat)),
     zoom=9, maptype="toner-lite", color="bw", messaging=FALSE)
-p2 <- ggmap(map) +
+map_plot <- ggmap(map) +
     geom_point(data=map_df,
         aes(x=lon, y=lat, colour=location), size=4) +
     labs(x="Longitude", y="Latitude")
 
-print(p1)
-print(p2)
+print(spatial_plot)
+print(map_plot)
 
 @
-
-
-
-\section{Spatial Interpolation}
-Use krigging to interpolate locations
-<<lasso_krig>>=
-lat_long_df <- DF %>% group_by(location_key) %>% summarise(lat=mean(Latitude), lon=mean(Longitude))
-aday <- best_errors[best_errors$set == "future" &
-        best_errors$datetime_key >= 2013010200 &
-        best_errors$datetime_key < 2013010300,]
-krig_df <- left_join(x=aday, y=lat_long_df, by=c("location"="location_key"))
-krig_df <- krig_df[,c("lat","lon","predict")]
-
-# a <- read.table("http://www.stat.ucla.edu/~nchristo/statistics_c173_c273/kriging_11.txt", header=TRUE)
-b <- as.geodata(krig_df)
-b <- jitterDupCoords(x=b, max=.05)
-prediction <- ksline(b, cov.model="exp",
-    cov.pars=c(10,3.33), nugget=0,
-    locations=c(29.90104,-95.32613))
-
-n <- 25
-x <- seq(min(krig_df$lat), max(krig_df$lat), length.out=n)
-y <- seq(min(krig_df$lon), max(krig_df$lon), length.out=n)
-xv <- rep(x, n)
-yv <- rep(y, each=n)
-in_mat <- as.matrix(cbind(xv,yv))
-q <- ksline(b, cov.model="gaussian",cov.pars=c(2,.1), locations=in_mat)
-cbind(q$predict[1:5], q$krige.var[1:5])
-image(q, val=q$predict)
-points(krig_df)
-
-
-@
-
 
 
 

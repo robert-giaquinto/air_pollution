@@ -20,7 +20,7 @@ DF$location_key <- ifelse(DF$location_key == 201000058, 201000026, DF$location_k
 # to speed up exploration, only use data from 2010 forward
 full_locations <- c(167001034L, 201000024L, 201000026L, 201001034L,
     201001035L, 201001039L, 201001042L, 245000022L) # add this one if modeling post 2011: 201001050L
-DF <- as.data.frame(DF[DF$date_key >= 20110000,]) #& DF$location_key %in% full_locations,])
+DF <- as.data.frame(DF[DF$date_key >= 20100000,]) #& DF$location_key %in% full_locations,])
 DF$County_Code <- NULL
 DF$State_Code <- NULL
 
